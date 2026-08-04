@@ -1,0 +1,847 @@
+{
+  "info": {
+    "name": "VMS - Bill Module",
+    "description": "Vendor bills — creation against an Approved Quotation, invoice upload, submission (kicks off the background AI 3-way verification pipeline), Director Financial Approval, Accounts verification, and Payment Department status updates. Self-contained: the \"Happy Path\" folder logs in as the seeded Super Admin, creates a fresh Department + HOD + Department User, two Directors, an Accounts user and a Payment Department user, creates a Vendor, creates and fully approves a Quotation (amount above the default ₹50,000 CEO Approval Limit so it routes to the two Directors), then walks a Bill through its full lifecycle. Run top-to-bottom. IMPORTANT: the \"3. Upload invoice PDF\" request requires a real PDF file to be attached manually in Postman (the 'file' form field) before sending — Postman collections cannot embed a portable binary file reference. The Director Financial Approval step has a short built-in delay to give the background AI verification pipeline (OCR + Rule Engine + Gemini) time to flip the bill to ai_verified; if it is still running (e.g. slow Gemini response), re-run that request. The \"Negative Cases\" folder runs after Happy Path and reuses its tokens/ids.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "superAdminEmail", "value": "superadmin@gmail.com" },
+    { "key": "superAdminPassword", "value": "123456789" },
+    { "key": "superAdminToken", "value": "" },
+    { "key": "runId", "value": "" },
+    { "key": "departmentName", "value": "" },
+    { "key": "departmentCode", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "" },
+    { "key": "hodToken", "value": "" },
+    { "key": "deptUserEmail", "value": "" },
+    { "key": "deptUserPassword", "value": "" },
+    { "key": "deptUserToken", "value": "" },
+    { "key": "director1Email", "value": "" },
+    { "key": "director1Password", "value": "" },
+    { "key": "director1Token", "value": "" },
+    { "key": "director2Email", "value": "" },
+    { "key": "director2Password", "value": "" },
+    { "key": "director2Token", "value": "" },
+    { "key": "accountsEmail", "value": "" },
+    { "key": "accountsPassword", "value": "" },
+    { "key": "accountsToken", "value": "" },
+    { "key": "paymentDeptEmail", "value": "" },
+    { "key": "paymentDeptPassword", "value": "" },
+    { "key": "paymentDeptToken", "value": "" },
+    { "key": "vendorId", "value": "" },
+    { "key": "quotationId", "value": "" },
+    { "key": "billId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('runId')) {",
+                  "  const runId = Date.now().toString();",
+                  "  pm.collectionVariables.set('runId', runId);",
+                  "  pm.collectionVariables.set('departmentName', 'Bills Dept ' + runId);",
+                  "  pm.collectionVariables.set('departmentCode', 'BLD' + runId);",
+                  "  pm.collectionVariables.set('hodEmail', 'hod.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('hodPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('deptUserEmail', 'deptuser.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('deptUserPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('director1Email', 'director1.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('director1Password', 'Password123!');",
+                  "  pm.collectionVariables.set('director2Email', 'director2.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('director2Password', 'Password123!');",
+                  "  pm.collectionVariables.set('accountsEmail', 'accounts.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('accountsPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('paymentDeptEmail', 'payment.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('paymentDeptPassword', 'Password123!');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('superAdminToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "2. Create Department with new HOD",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{departmentName}}\",\n  \"code\": \"{{departmentCode}}\",\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Test HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "3. Create Director 1 (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Director One\",\n  \"email\": \"{{director1Email}}\",\n  \"password\": \"{{director1Password}}\",\n  \"role\": \"director\"\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "4. Create Director 2 (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Director Two\",\n  \"email\": \"{{director2Email}}\",\n  \"password\": \"{{director2Password}}\",\n  \"role\": \"director\"\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "5. Create Accounts user (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Accounts User\",\n  \"email\": \"{{accountsEmail}}\",\n  \"password\": \"{{accountsPassword}}\",\n  \"role\": \"accounts\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Created with accounts role', () => pm.expect(body.data.role).to.eql('accounts'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Create Payment Department user (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Payment Dept User\",\n  \"email\": \"{{paymentDeptEmail}}\",\n  \"password\": \"{{paymentDeptPassword}}\",\n  \"role\": \"payment_department\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Created with payment_department role', () => pm.expect(body.data.role).to.eql('payment_department'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Login as HOD",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. HOD creates a Department User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{hodToken}}" }
+            ],
+            "url": "{{baseUrl}}/hod/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Department User\",\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "9. Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('deptUserToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Login as Director 1",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{director1Email}}\",\n  \"password\": \"{{director1Password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('director1Token', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Login as Director 2",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{director2Email}}\",\n  \"password\": \"{{director2Password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('director2Token', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Login as Accounts",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{accountsEmail}}\",\n  \"password\": \"{{accountsPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accountsToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. Login as Payment Department",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{paymentDeptEmail}}\",\n  \"password\": \"{{paymentDeptPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('paymentDeptToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Create Vendor (Department User)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Supplies\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"vendor@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"400001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"Acme Supplies\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('vendorId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Create Quotation (above CEO Approval Limit)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor\": \"{{vendorId}}\",\n  \"quotationDate\": \"2026-07-10\",\n  \"requiredDate\": \"2026-08-10\",\n  \"amount\": 90000,\n  \"gst\": 18,\n  \"currency\": \"INR\",\n  \"paymentTerms\": \"Net 30\",\n  \"deliveryTerms\": \"FOB destination\",\n  \"priority\": \"high\",\n  \"description\": \"Bulk raw material order\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation created in draft status', () => pm.expect(body.data.status).to.eql('draft'));",
+                  "pm.collectionVariables.set('quotationId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Submit Quotation",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is now submitted', () => pm.expect(body.data.status).to.eql('submitted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Director 1 approves",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "18. Director 2 approves (fully approved)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director2Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is now fully Approved', () => pm.expect(body.data.status).to.eql('approved'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Create Bill against the Approved Quotation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation\": \"{{quotationId}}\",\n  \"invoiceNumber\": \"INV-1001\",\n  \"invoiceDate\": \"2026-07-10\",\n  \"invoiceAmount\": 100000,\n  \"taxableAmount\": 84746,\n  \"gstAmount\": 15254,\n  \"paymentTerms\": \"Net 30\",\n  \"dueDate\": \"2026-08-10\",\n  \"remarks\": \"Initial invoice for bulk order\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Bill created in draft status', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.billCode).to.match(/^[A-Z]+-BILL/);",
+                  "  pm.expect(body.data.status).to.eql('draft');",
+                  "});",
+                  "pm.collectionVariables.set('billId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "20. Upload invoice PDF (attach a PDF file manually)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/bills/{{billId}}/invoice",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [], "description": "Select a PDF invoice file before sending this request." }
+              ]
+            },
+            "description": "Postman collections cannot embed a portable binary file reference — before sending, click this field and choose any local PDF file. The bill cannot be submitted (next step) without this upload."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Invoice file recorded', () => pm.expect(body.data.invoiceFiles).to.have.lengthOf.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "21. Submit Bill to Accounts (kicks off background AI verification)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/bills/{{billId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Bill is now submitted', () => pm.expect(body.data.status).to.eql('submitted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "22. Director Financial Approval (approved)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/financial-decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// The 3-way AI verification pipeline (OCR + Rule Engine + Gemini) runs in the background",
+                  "// after Submit and must finish (bill status -> ai_verified) before a Director can act.",
+                  "// Give it a head start here. If this request still 404s, the pipeline is slow (e.g. Gemini",
+                  "// latency) — simply re-run this request a few seconds later.",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 10000) { /* busy-wait for background AI pipeline */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Director financially approved the bill', () => {",
+                  "  pm.expect(body.data.directorFinancialDecision).to.eql('approved');",
+                  "  pm.expect(body.data.status).to.eql('director_approved');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "23. Accounts verifies the Bill",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accountsToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"verified\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Bill is now verified', () => pm.expect(body.data.status).to.eql('verified'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "24. Payment Department sets payment_pending",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentDeptToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/payment-status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"payment_pending\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Bill payment status updated', () => pm.expect(body.data.status).to.eql('payment_pending'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "25. List bills (filtered by quotation)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/bills?quotation={{quotationId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('The bill created earlier is present', () => {",
+                  "  pm.expect(body.data.some((b) => b.id === pm.collectionVariables.get('billId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "26. Get bill by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/bills/{{billId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the bill created earlier', () => pm.expect(body.data.id).to.eql(pm.collectionVariables.get('billId')));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Create a duplicate bill for the same Quotation (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation\": \"{{quotationId}}\",\n  \"invoiceNumber\": \"INV-1002-DUP\",\n  \"invoiceDate\": \"2026-07-11\",\n  \"invoiceAmount\": 5000,\n  \"taxableAmount\": 4237,\n  \"gstAmount\": 763,\n  \"paymentTerms\": \"Net 30\",\n  \"dueDate\": \"2026-08-11\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 409 — a bill already exists for this quotation', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accounts decision attempted by a Director (wrong role)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"verified\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 — only Accounts can decide on a bill', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Financial decision attempted by Department User (wrong role)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/financial-decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 — only a Director can make a financial approval decision', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment status update attempted by Accounts (wrong role)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accountsToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills/{{billId}}/payment-status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"paid\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 — only Payment Department can update payment status', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create bill with missing required fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/bills",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation\": \"{{quotationId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has field errors for the missing required fields', () => {",
+                  "  const errors = pm.response.json().errors;",
+                  "  pm.expect(errors).to.have.property('invoiceNumber');",
+                  "  pm.expect(errors).to.have.property('invoiceAmount');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get bill with non-existent id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/bills/665f1c2b9b1d4c1a2c8e4a10"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List bills with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bills"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,928 @@
+{
+  "info": {
+    "name": "VMS - Requirements Module",
+    "description": "Phase 1 of the Enterprise Procurement Workflow — Requirement create/list/view/edit/submit/delete. Run requests top-to-bottom in \"Happy Path\" — it logs in as a Department User, creates a draft requirement, reads/updates it, submits it, then creates and deletes a second draft.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "departmentUserEmail", "value": "" },
+    { "key": "departmentUserPassword", "value": "Password123!" },
+    { "key": "accessToken", "value": "" },
+    { "key": "requirementId", "value": "" },
+    { "key": "secondRequirementId", "value": "" },
+    { "key": "quotationId", "value": "" },
+    { "key": "secondQuotationId", "value": "" },
+    { "key": "directorEmail", "value": "" },
+    { "key": "directorAccessToken", "value": "" },
+    { "key": "vendorId", "value": "" },
+    { "key": "purchaseOrderId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{departmentUserEmail}}\",\n  \"password\": \"{{departmentUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create requirement (Draft)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Office laptops {{$timestamp}}\",\n  \"description\": \"5 laptops for the new hires\",\n  \"priority\": \"high\",\n  \"budget\": 300000,\n  \"requiredDate\": \"2026-08-01\",\n  \"items\": [\n    { \"itemName\": \"Laptop\", \"specification\": \"16GB RAM, 512GB SSD\", \"quantity\": 5, \"unit\": \"pcs\", \"estimatedRate\": 60000 }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns Draft status and a requirement number', () => {",
+                  "  pm.expect(body.data.status).to.eql('draft');",
+                  "  pm.expect(body.data.requirementNumber).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('requirementId', body.data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. List requirements (scoped to own)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements?page=1&limit=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "4. Get requirement by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "5. Edit draft requirement",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}",
+            "body": { "mode": "raw", "raw": "{\n  \"budget\": 320000,\n  \"remarks\": \"Updated after re-costing\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Budget updated', () => pm.expect(pm.response.json().data.budget).to.eql(320000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Submit requirement",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status is now submitted', () => pm.expect(pm.response.json().data.status).to.eql('submitted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Create second draft (for deletion)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Test to delete {{$timestamp}}\",\n  \"budget\": 1000,\n  \"requiredDate\": \"2026-08-01\",\n  \"items\": [\n    { \"itemName\": \"Pens\", \"quantity\": 10, \"unit\": \"pcs\", \"estimatedRate\": 10 }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('secondRequirementId', pm.response.json().data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Delete draft requirement",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{secondRequirementId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Submit fails once already submitted",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 404 (no longer Draft)', () => pm.response.to.have.status(404));"] }
+            }
+          ]
+        },
+        {
+          "name": "Edit fails once submitted",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}",
+            "body": { "mode": "raw", "raw": "{\n  \"budget\": 1\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 404 (no longer editable)', () => pm.response.to.have.status(404));"] }
+            }
+          ]
+        },
+        {
+          "name": "Create fails without auth",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/requirements",
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"No auth\",\n  \"budget\": 1,\n  \"requiredDate\": \"2026-08-01\",\n  \"items\": []\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Phase 3 - Quotation OCR",
+      "description": "Run after \"Happy Path\" step 6 (Submit requirement) so {{requirementId}} is Submitted. Adds a temporary-vendor quotation, uploads an attachment (select a real PDF/PNG/JPG in the Upload Attachment request's Body tab before sending), then polls the quotation for the OCR result and exercises Retry.",
+      "item": [
+        {
+          "name": "1. Add quotation to requirement",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"temporaryVendor\": { \"name\": \"Sample OCR Vendor\", \"contactPerson\": \"Asha\", \"phone\": \"9000000000\" },\n  \"quotationDate\": \"2026-07-18\",\n  \"amount\": 250000,\n  \"gst\": 18,\n  \"currency\": \"INR\",\n  \"paymentTerms\": \"Net 30\",\n  \"deliveryTerms\": \"Within 2 Weeks\",\n  \"priority\": \"medium\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quotationId', pm.response.json().data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload attachment (select a file before sending)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/quotations/{{quotationId}}/attachments",
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": [] }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Attachment recorded', () => pm.expect(pm.response.json().data.attachments.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get quotation (poll ocr.status)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const ocr = pm.response.json().data.ocr;",
+                  "pm.test('ocr field present', () => pm.expect(ocr).to.exist);",
+                  "console.log('OCR status:', ocr && ocr.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Retry OCR",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/quotations/{{quotationId}}/ocr/retry"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('OCR status is processing', () => pm.expect(pm.response.json().data.ocr.status).to.eql('processing'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Phase 4 - AI Comparison",
+      "description": "Run after \"Phase 3 - Quotation OCR\" so {{requirementId}} already has one quotation. Adds a second quotation with a different amount, generates a comparison across both, then fetches the latest comparison. Comparison reads whatever OCR structured data already exists on each quotation at generation time — it does not wait for or re-run OCR.",
+      "item": [
+        {
+          "name": "1. Add second quotation (for comparison)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"temporaryVendor\": { \"name\": \"Second Comparison Vendor\", \"contactPerson\": \"Rohan\", \"phone\": \"9111111111\" },\n  \"quotationDate\": \"2026-07-19\",\n  \"amount\": 270000,\n  \"gst\": 18,\n  \"currency\": \"INR\",\n  \"paymentTerms\": \"Net 45\",\n  \"deliveryTerms\": \"Within 3 Weeks\",\n  \"priority\": \"medium\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('secondQuotationId', pm.response.json().data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Generate comparison",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/comparison"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Compared both quotations', () => pm.expect(data.statistics.totalQuotations).to.eql(2));",
+                  "pm.test('Recommendation is advisory only', () => pm.expect(data.recommendation.isAdvisoryOnly).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get latest comparison",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/comparison"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns statistics and observations', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data.statistics).to.exist;",
+                  "  pm.expect(data.observations).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Generate fails with only one quotation (fresh requirement)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{secondRequirementId}}/comparison"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 or 404 (no quotations / requirement already deleted)', () => pm.expect([400, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Phase 5 - Director Review",
+      "description": "Run after \"Phase 4 - AI Comparison\" so {{requirementId}} already has a generated comparison. The Department User explicitly submits the requirement to the Director first (Workflow Enhancement — see docs/WORKFLOW_ENHANCEMENT_DIRECTOR_SUBMISSION.md); only then does opening the review package advance it into Director Review. Adds remarks, then exercises a Send Back decision (Send Back is used here rather than Approve/Reject so the collection stays re-runnable without leaving the requirement in a terminal state).",
+      "item": [
+        {
+          "name": "1. Department User submits to Director",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/submit-to-director"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement is quotation_comparison, ready for the Director', () => pm.expect(pm.response.json().data.status).to.eql('quotation_comparison'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Login as Director",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{directorEmail}}\",\n  \"password\": \"{{departmentUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('directorAccessToken', pm.response.json().data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get Director Review package (advances status)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Requirement now in Director Review', () => pm.expect(data.requirement.status).to.eql('director_review'));",
+                  "pm.test('Includes comparison, quotations, activity logs, and review', () => {",
+                  "  pm.expect(data.comparison).to.exist;",
+                  "  pm.expect(data.quotations).to.be.an('array');",
+                  "  pm.expect(data.activityLogs).to.be.an('array');",
+                  "  pm.expect(data.review).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Add remarks (no decision yet)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review/remarks",
+            "body": { "mode": "raw", "raw": "{\n  \"remarks\": \"Checking vendor references before deciding.\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Remarks stored and version incremented', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data.remarks).to.eql('Checking vendor references before deciding.');",
+                  "  pm.expect(data.version).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Department User forbidden from deciding (read only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"] }
+            }
+          ]
+        },
+        {
+          "name": "6. Send Back decision",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"sent_back\",\n  \"remarks\": \"Please clarify the delivery timeline with Vendor B before resubmitting.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Requirement returned to Quotation Collection', () => pm.expect(data.requirement.status).to.eql('quotation_collection'));",
+                  "pm.test('Review decision is sent_back', () => pm.expect(data.review.decision).to.eql('sent_back'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Decide again fails (no longer in Director Review)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 404 (no longer in Director Review)', () => pm.response.to.have.status(404));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Phase 6 - Vendor Registration",
+      "description": "Run after \"Phase 5 - Director Review\" — that folder deliberately ends on Send Back, so this folder re-submits to the Director and re-opens the review, Approves this time, then registers a Vendor from the now-Approved requirement. Vendor Registration only ever reads the existing Requirement/AI Comparison/Director Review — it never re-runs OCR or recomputes the comparison. Select real PDF/PNG/JPG files in the \"Register vendor\" request's Body tab (gstCertificate/panCard/cancelledCheque; msmeCertificate is optional) before sending.",
+      "item": [
+        {
+          "name": "1. Department User re-submits to Director (after Send Back)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/submit-to-director"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement is quotation_comparison again — unlimited Send Back cycles are supported', () => pm.expect(pm.response.json().data.status).to.eql('quotation_comparison'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Re-open Director Review (advances back into director_review)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement back in Director Review', () => pm.expect(pm.response.json().data.requirement.status).to.eql('director_review'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Approve decision",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/director-review/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\",\n  \"remarks\": \"Vendor references checked out.\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement is Approved', () => pm.expect(pm.response.json().data.requirement.status).to.eql('approved'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Director forbidden from registering (read only)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{directorAccessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/vendor-registration",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "Should Not Be Created", "type": "text" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 (Director is read only for registration)', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Register vendor (select files before sending)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/vendor-registration",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "Winning Vendor Co", "type": "text" },
+                { "key": "contactPerson", "value": "Ramesh Gupta", "type": "text" },
+                { "key": "phone", "value": "9876543210", "type": "text" },
+                { "key": "email", "value": "accounts+{{$timestamp}}@winningvendor.example", "type": "text" },
+                { "key": "gstNumber", "value": "27ABCDE1234F1Z5", "type": "text" },
+                { "key": "panNumber", "value": "ABCDE1234F", "type": "text" },
+                { "key": "address", "value": "Industrial Estate, Plot 12", "type": "text" },
+                { "key": "state", "value": "Maharashtra", "type": "text" },
+                { "key": "district", "value": "Pune", "type": "text" },
+                { "key": "city", "value": "Pune", "type": "text" },
+                { "key": "pincode", "value": "411001", "type": "text" },
+                { "key": "bankName", "value": "HDFC Bank", "type": "text" },
+                { "key": "accountHolderName", "value": "Winning Vendor Co", "type": "text" },
+                { "key": "accountNumber", "value": "123456789012", "type": "text" },
+                { "key": "ifscCode", "value": "HDFC0001234", "type": "text" },
+                { "key": "category", "value": "Raw Materials", "type": "text" },
+                { "key": "gstCertificate", "type": "file", "src": [] },
+                { "key": "panCard", "type": "file", "src": [] },
+                { "key": "cancelledCheque", "type": "file", "src": [] }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Vendor linked to requirement and marked registered', () => {",
+                  "  pm.expect(data.vendor.createdFromRequirement).to.eql(pm.collectionVariables.get('requirementId'));",
+                  "  pm.expect(data.vendor.registrationStatus).to.eql('registered');",
+                  "});",
+                  "pm.test('Requirement advanced to vendor_finalized', () => pm.expect(data.requirement.status).to.eql('vendor_finalized'));",
+                  "pm.collectionVariables.set('vendorId', data.vendor._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Get registered vendor for this requirement",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/vendor-registration"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the same vendor', () => pm.expect(pm.response.json().data._id).to.eql(pm.collectionVariables.get('vendorId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Register again fails (already registered)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/requirements/{{requirementId}}/vendor-registration",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "Second Attempt Co", "type": "text" },
+                { "key": "contactPerson", "value": "Someone Else", "type": "text" },
+                { "key": "phone", "value": "9123456780", "type": "text" },
+                { "key": "email", "value": "second+{{$timestamp}}@vendor.example", "type": "text" },
+                { "key": "address", "value": "Somewhere", "type": "text" },
+                { "key": "state", "value": "Maharashtra", "type": "text" },
+                { "key": "district", "value": "Pune", "type": "text" },
+                { "key": "city", "value": "Pune", "type": "text" },
+                { "key": "pincode", "value": "411001", "type": "text" },
+                { "key": "bankName", "value": "ICICI Bank", "type": "text" },
+                { "key": "accountHolderName", "value": "Second Attempt Co", "type": "text" },
+                { "key": "accountNumber", "value": "987654321098", "type": "text" },
+                { "key": "ifscCode", "value": "ICIC0001234", "type": "text" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 409 (already registered for this requirement)', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Phase 7 - Purchase Order",
+      "description": "Run after \"Phase 6 - Vendor Registration\" so {{requirementId}} is vendor_finalized. Generates a Purchase Order directly from the Requirement (the registered Vendor and its winning Quotation are resolved server-side — never picked manually), fetches it back by requirement, emails it to the vendor, and confirms a second generation attempt is rejected. The original quotation-only PO flow (POST /purchase-orders with quotationId) is untouched by this phase — see the separate 'VMS - Purchase Order Module' collection for that regression-covered path.",
+      "item": [
+        {
+          "name": "1. Generate Purchase Order from Requirement",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/purchase-orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementId\": \"{{requirementId}}\",\n  \"items\": [\n    { \"itemName\": \"Laptop\", \"quantity\": 5, \"unitPrice\": 60000, \"gstRate\": 18, \"gstAmount\": 54000, \"taxAmount\": 0, \"discount\": 0, \"total\": 354000 }\n  ],\n  \"terms\": \"Net 30\",\n  \"notes\": \"Deliver to the main office\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Linked to the Requirement, with a resolved quotation/vendor', () => {",
+                  "  pm.expect(data.requirement).to.eql(pm.collectionVariables.get('requirementId'));",
+                  "  pm.expect(data.requirementNumber).to.be.a('string');",
+                  "  pm.expect(data.quotation).to.be.a('string');",
+                  "  pm.expect(data.vendorName).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('purchaseOrderId', data._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Get Purchase Order by Requirement",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/purchase-orders/by-requirement/{{requirementId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the same Purchase Order', () => pm.expect(pm.response.json().data._id).to.eql(pm.collectionVariables.get('purchaseOrderId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Email Purchase Order to vendor",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/purchase-orders/{{purchaseOrderId}}/email",
+            "body": { "mode": "raw", "raw": "{}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Reports whether the email was actually sent (false unless SMTP_* env vars are configured)', () => {",
+                  "  pm.expect(pm.response.json().data).to.have.property('sent');",
+                  "  pm.expect(pm.response.json().data.recipientEmail).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Generate again fails (already generated for this Requirement)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/purchase-orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementId\": \"{{requirementId}}\",\n  \"items\": [\n    { \"itemName\": \"Laptop\", \"quantity\": 5, \"unitPrice\": 60000, \"gstRate\": 18, \"gstAmount\": 54000, \"taxAmount\": 0, \"discount\": 0, \"total\": 354000 }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 409 (Purchase Order already generated for this Requirement)', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Providing both quotationId and requirementId fails validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/purchase-orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotationId\": \"{{quotationId}}\",\n  \"requirementId\": \"{{requirementId}}\",\n  \"items\": [\n    { \"itemName\": \"Laptop\", \"quantity\": 1, \"unitPrice\": 100, \"total\": 100 }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 (exactly one of quotationId/requirementId required)', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

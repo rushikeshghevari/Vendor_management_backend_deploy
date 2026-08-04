@@ -1,0 +1,682 @@
+{
+  "info": {
+    "name": "VMS - Quotation Module",
+    "description": "Quotation creation, submission, negotiation, and Director/CEO approval. Self-contained: the \"Happy Path\" folder logs in as the seeded Super Admin, creates a fresh Department + HOD + Department User, creates a Vendor, then creates a Quotation priced above the CEO Approval Limit (default ₹50,000) so it routes to two Directors instead of the CEO — both a full Submit -> Negotiation -> Resubmit -> dual Director Approval cycle are exercised. Run top-to-bottom. The \"Negative Cases\" folder runs after Happy Path and reuses its tokens/ids.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "superAdminEmail", "value": "superadmin@gmail.com" },
+    { "key": "superAdminPassword", "value": "123456789" },
+    { "key": "superAdminToken", "value": "" },
+    { "key": "runId", "value": "" },
+    { "key": "departmentName", "value": "" },
+    { "key": "departmentCode", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "" },
+    { "key": "hodToken", "value": "" },
+    { "key": "deptUserEmail", "value": "" },
+    { "key": "deptUserPassword", "value": "" },
+    { "key": "deptUserToken", "value": "" },
+    { "key": "director1Email", "value": "" },
+    { "key": "director1Password", "value": "" },
+    { "key": "director1Token", "value": "" },
+    { "key": "director2Email", "value": "" },
+    { "key": "director2Password", "value": "" },
+    { "key": "director2Token", "value": "" },
+    { "key": "vendorId", "value": "" },
+    { "key": "quotationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('runId')) {",
+                  "  const runId = Date.now().toString();",
+                  "  pm.collectionVariables.set('runId', runId);",
+                  "  pm.collectionVariables.set('departmentName', 'Quotations Dept ' + runId);",
+                  "  pm.collectionVariables.set('departmentCode', 'QTD' + runId);",
+                  "  pm.collectionVariables.set('hodEmail', 'hod.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('hodPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('deptUserEmail', 'deptuser.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('deptUserPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('director1Email', 'director1.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('director1Password', 'Password123!');",
+                  "  pm.collectionVariables.set('director2Email', 'director2.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('director2Password', 'Password123!');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('superAdminToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "2. Create Department with new HOD",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{departmentName}}\",\n  \"code\": \"{{departmentCode}}\",\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Test HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Create Director 1 (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Director One\",\n  \"email\": \"{{director1Email}}\",\n  \"password\": \"{{director1Password}}\",\n  \"role\": \"director\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Created with director role', () => pm.expect(body.data.role).to.eql('director'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Create Director 2 (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Director Two\",\n  \"email\": \"{{director2Email}}\",\n  \"password\": \"{{director2Password}}\",\n  \"role\": \"director\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Created with director role', () => pm.expect(body.data.role).to.eql('director'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Login as HOD",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. HOD creates a Department User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{hodToken}}" }
+            ],
+            "url": "{{baseUrl}}/hod/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Department User\",\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('deptUserToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Login as Director 1",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{director1Email}}\",\n  \"password\": \"{{director1Password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('director1Token', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Login as Director 2",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{director2Email}}\",\n  \"password\": \"{{director2Password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('director2Token', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Create Vendor (Department User)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Supplies\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"vendor@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"400001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"Acme Supplies\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('vendorId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Create Quotation (Draft, above CEO Approval Limit)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor\": \"{{vendorId}}\",\n  \"quotationDate\": \"2026-07-10\",\n  \"requiredDate\": \"2026-08-10\",\n  \"amount\": 75000,\n  \"gst\": 18,\n  \"currency\": \"INR\",\n  \"paymentTerms\": \"Net 30\",\n  \"deliveryTerms\": \"FOB destination\",\n  \"priority\": \"high\",\n  \"description\": \"Bulk raw material order\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation created in draft status, above the CEO Approval Limit', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.quotationCode).to.match(/-QTN\\d+$/);",
+                  "  pm.expect(body.data.status).to.eql('draft');",
+                  "  pm.expect(body.data.amount).to.eql(75000);",
+                  "});",
+                  "pm.collectionVariables.set('quotationId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Update Quotation (Draft)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"remarks\": \"Updated before submission\",\n  \"priority\": \"urgent\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Still in draft status', () => pm.expect(body.data.status).to.eql('draft'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. List quotations (Department User)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations?status=draft"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Draft quotation is present in the list', () => {",
+                  "  pm.expect(body.data.some((q) => q.id === pm.collectionVariables.get('quotationId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Submit Quotation (requires 2 active Directors)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is now submitted', () => pm.expect(body.data.status).to.eql('submitted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Director 1 sends quotation to Negotiation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"negotiation\",\n  \"remarks\": \"Please revise the delivery terms\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation moved to negotiation (blocking decision, immediate)', () => {",
+                  "  pm.expect(body.data.status).to.eql('negotiation');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Department User resubmits Quotation",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/resubmit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is now resubmitted', () => pm.expect(body.data.status).to.eql('resubmitted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Director 1 approves (1 of 2 — roster not yet complete)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Still resubmitted — Director 2 has not approved yet', () => {",
+                  "  pm.expect(body.data.status).to.eql('resubmitted');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18. Director 2 approves (2 of 2 — fully approved)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director2Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is now fully Approved', () => {",
+                  "  pm.expect(body.data.status).to.eql('approved');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Get quotation by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Approved with both Director approvals recorded', () => {",
+                  "  pm.expect(body.data.status).to.eql('approved');",
+                  "  pm.expect(body.data.directorApprovals).to.have.lengthOf(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Submit an already-approved quotation (not Draft)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 — quotation is no longer in Draft status', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide on a quotation as non-Director (department_user)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create quotation with missing required fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor\": \"{{vendorId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has field errors for the missing required fields', () => {",
+                  "  const errors = pm.response.json().errors;",
+                  "  pm.expect(errors).to.have.property('amount');",
+                  "  pm.expect(errors).to.have.property('paymentTerms');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decision without mandatory remarks (Negotiation)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{director1Token}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"negotiation\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 — remarks are mandatory for Negotiation', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for remarks', () => {",
+                  "  pm.expect(pm.response.json().errors).to.have.property('remarks');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get quotation with non-existent id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/665f1c2b9b1d4c1a2c8e4a10"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List quotations with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/quotations"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,504 @@
+{
+  "info": {
+    "name": "VMS - Vendor Module",
+    "description": "Vendor registration and management endpoints for the Vendor Management System backend. The \"Happy Path\" folder is self-contained: it logs in as the seeded Super Admin, creates a fresh Department with a brand-new HOD, has that HOD create a Department User, then exercises the full Vendor CRUD lifecycle as that Department User. Run top-to-bottom. The \"Negative Cases\" folder runs after Happy Path and reuses its tokens/ids.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "superAdminEmail", "value": "superadmin@gmail.com" },
+    { "key": "superAdminPassword", "value": "123456789" },
+    { "key": "superAdminToken", "value": "" },
+    { "key": "runId", "value": "" },
+    { "key": "departmentName", "value": "" },
+    { "key": "departmentCode", "value": "" },
+    { "key": "departmentId", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "" },
+    { "key": "hodToken", "value": "" },
+    { "key": "deptUserEmail", "value": "" },
+    { "key": "deptUserPassword", "value": "" },
+    { "key": "deptUserToken", "value": "" },
+    { "key": "vendorId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('runId')) {",
+                  "  const runId = Date.now().toString();",
+                  "  pm.collectionVariables.set('runId', runId);",
+                  "  pm.collectionVariables.set('departmentName', 'Vendors Dept ' + runId);",
+                  "  pm.collectionVariables.set('departmentCode', 'VDT' + runId);",
+                  "  pm.collectionVariables.set('hodEmail', 'hod.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('hodPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('deptUserEmail', 'deptuser.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('deptUserPassword', 'Password123!');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns an access token', () => pm.expect(body.data.accessToken).to.be.a('string'));",
+                  "pm.collectionVariables.set('superAdminToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "2. Create Department with new HOD",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{departmentName}}\",\n  \"code\": \"{{departmentCode}}\",\n  \"description\": \"Created by VMS-Vendors Postman collection\",\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Test HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Department created with HOD linked', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.hod).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('departmentId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Login as HOD",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. HOD creates a Department User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{hodToken}}" }
+            ],
+            "url": "{{baseUrl}}/hod/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Department User\",\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('User created with department_user role', () => {",
+                  "  pm.expect(body.data.email).to.eql(pm.collectionVariables.get('deptUserEmail'));",
+                  "  pm.expect(body.data.role).to.eql('department_user');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('deptUserToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Create Vendor",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Supplies\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"vendor@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"400001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"Acme Supplies\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Vendor created with a code and bank details', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.code).to.match(/-VEN\\d+$/);",
+                  "  pm.expect(body.data.bankDetails.ifscCode).to.eql('HDFC0001234');",
+                  "  pm.expect(body.data.status).to.eql('active');",
+                  "});",
+                  "pm.collectionVariables.set('vendorId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. List vendors (search filter)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/vendors?search=Acme"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Search returns the created vendor', () => {",
+                  "  pm.expect(body.data.some((v) => v.id === pm.collectionVariables.get('vendorId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. List vendors (category filter)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/vendors?category=Raw Materials"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('All returned vendors match the category', () => {",
+                  "  body.data.forEach((v) => pm.expect(v.category).to.eql('Raw Materials'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. List vendors (status filter)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/vendors?status=active"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('All returned vendors are active', () => {",
+                  "  body.data.forEach((v) => pm.expect(v.status).to.eql('active'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Get vendor by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/vendors/{{vendorId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the vendor created earlier', () => {",
+                  "  pm.expect(body.data.id).to.eql(pm.collectionVariables.get('vendorId'));",
+                  "  pm.expect(body.data.name).to.eql('Acme Supplies');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Update vendor",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors/{{vendorId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contactPerson\": \"Jane Doe\",\n  \"category\": \"Packaging Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Vendor id unchanged', () => pm.expect(body.data.id).to.eql(pm.collectionVariables.get('vendorId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Set vendor status to inactive",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors/{{vendorId}}/status",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"inactive\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Vendor status updated', () => pm.expect(body.data.status).to.eql('inactive'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Create vendor as Super Admin (wrong role)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Should Not Be Created\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"blocked@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"400001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"John Doe\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 — Super Admin cannot register vendors', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create vendor with invalid phone format",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bad Phone Vendor\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"12345\",\n  \"email\": \"badphone@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"400001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"John Doe\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for phone', () => {",
+                  "  pm.expect(pm.response.json().errors).to.have.property('phone');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create vendor with invalid pincode format",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bad Pincode Vendor\",\n  \"contactPerson\": \"John Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"badpincode@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Mumbai\",\n  \"city\": \"Mumbai\",\n  \"pincode\": \"12\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"John Doe\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for pincode', () => {",
+                  "  pm.expect(pm.response.json().errors).to.have.property('pincode');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update vendor as Super Admin (wrong role)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors/{{vendorId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"Should Not Update\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403 — Super Admin cannot update vendors', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get vendor with non-existent id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/vendors/665f1c2b9b1d4c1a2c8e4a10"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List vendors with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vendors"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

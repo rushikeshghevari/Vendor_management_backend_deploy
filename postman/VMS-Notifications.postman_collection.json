@@ -1,0 +1,589 @@
+{
+  "info": {
+    "name": "VMS - Notifications Module",
+    "description": "Teams/Slack-style notification center — list/search/filter, read/unread, pin, archive, soft-delete, and Super Admin broadcast + analytics.\n\nHappy Path logs in as Super Admin, creates a fresh Department and a Department User in it (so there's a second, real login to receive notifications), broadcasts to that role, then exercises the search/isRead/priority list filters and the per-notification actions (mark read, pin, unpin, archive, delivered, delete) as that second user. A second, self-targeted broadcast is sent to the Super Admin's own inbox purely so a Negative Case can prove one user cannot mark another user's notification as read.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "email", "value": "superadmin@gmail.com" },
+    { "key": "password", "value": "123456789" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "superAdminUserId", "value": "" },
+    { "key": "departmentId", "value": "" },
+    { "key": "secondEmail", "value": "" },
+    { "key": "secondPassword", "value": "" },
+    { "key": "secondUserId", "value": "" },
+    { "key": "secondAccessToken", "value": "" },
+    { "key": "broadcastTitle", "value": "" },
+    { "key": "notificationId", "value": "" },
+    { "key": "adminOwnNotificationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns tokens and user', () => {",
+                  "  pm.expect(body.data.accessToken).to.be.a('string');",
+                  "  pm.expect(body.data.user.id).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "pm.collectionVariables.set('superAdminUserId', body.data.user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create Department (for the second user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Notif Test Dept {{$timestamp}}\",\n  \"code\": \"NOTIF{{$timestamp}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('departmentId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Create Department User (notification recipient)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Notification Recipient\",\n  \"email\": \"{{secondEmail}}\",\n  \"password\": \"{{secondPassword}}\",\n  \"role\": \"department_user\",\n  \"department\": \"{{departmentId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('secondEmail', 'notify.user.' + Date.now() + '@vms.local');",
+                  "pm.collectionVariables.set('secondPassword', 'Passw0rd123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('User created with department_user role', () => pm.expect(body.data.role).to.eql('department_user'));",
+                  "pm.collectionVariables.set('secondUserId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Login as second user (department_user)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{secondEmail}}\",\n  \"password\": \"{{secondPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('secondAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Broadcast to department_user role",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/notifications/broadcast",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{broadcastTitle}}\",\n  \"message\": \"System maintenance window scheduled tonight.\",\n  \"targetRoles\": [\"department_user\"]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": ["pm.collectionVariables.set('broadcastTitle', 'BroadcastTest-' + Date.now());"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Broadcast reached at least one recipient', () => pm.expect(body.data.sent).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Broadcast to Super Admin only (self-targeted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/notifications/broadcast",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Self broadcast {{$timestamp}}\",\n  \"message\": \"Sent only to the Super Admin, used to test cross-user notification access.\",\n  \"targetUserIds\": [\"{{superAdminUserId}}\"]\n}"
+            },
+            "description": "Sets up a notification the Super Admin owns, so a later Negative Case can prove the second user cannot mark it as read (404, not their notification)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Broadcast reached exactly the Super Admin', () => pm.expect(body.data.sent).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. List Super Admin's own notifications (capture owned id)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/notifications?search=Self%20broadcast"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Finds the self-broadcast notification', () => pm.expect(body.data.length).to.be.above(0));",
+                  "pm.collectionVariables.set('adminOwnNotificationId', body.data[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. List second user's notifications (?search=)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications?search={{broadcastTitle}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Finds the broadcast via search', () => {",
+                  "  pm.expect(body.data.length).to.be.above(0);",
+                  "  pm.expect(body.data[0].title).to.eql(pm.collectionVariables.get('broadcastTitle'));",
+                  "  pm.expect(body.data[0].notificationType).to.eql('broadcast');",
+                  "  pm.expect(body.data[0].priority).to.eql('high');",
+                  "});",
+                  "pm.collectionVariables.set('notificationId', body.data[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. List second user's notifications (?isRead=false)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications?isRead=false"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Our unread broadcast is present', () => {",
+                  "  pm.expect(body.data.some(n => n.id === pm.collectionVariables.get('notificationId'))).to.be.true;",
+                  "  pm.expect(body.data.every(n => n.isRead === false)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. List second user's notifications (?priority=high)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications?priority=high"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Our high-priority broadcast is present', () => {",
+                  "  pm.expect(body.data.some(n => n.id === pm.collectionVariables.get('notificationId'))).to.be.true;",
+                  "  pm.expect(body.data.every(n => n.priority === 'high')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Get unread count",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/unread-count"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Unread count is at least 1', () => pm.expect(pm.response.json().data.count).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Mark notification as read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/read"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('isRead is true', () => pm.expect(pm.response.json().data.isRead).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. Pin notification",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/pin"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('isPinned is true', () => pm.expect(pm.response.json().data.isPinned).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Unpin notification",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/unpin"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('isPinned is false', () => pm.expect(pm.response.json().data.isPinned).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Archive notification",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/archive"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('isArchived is true', () => pm.expect(pm.response.json().data.isArchived).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Record push delivery confirmation",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/delivered"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('pushDeliveryStatus is sent', () => pm.expect(pm.response.json().data.pushDeliveryStatus).to.eql('sent'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Mark all notifications as read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/read-all"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18. Notification analytics (Super Admin)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/notifications/analytics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns analytics totals', () => {",
+                  "  pm.expect(body.data.total).to.be.a('number');",
+                  "  pm.expect(body.data.read).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Delete notification",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Broadcast as non-Super-Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/notifications/broadcast",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Should be blocked\",\n  \"message\": \"A department_user should never be able to broadcast.\",\n  \"targetRoles\": [\"department_user\"]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark read on someone else's notification id",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/{{adminOwnNotificationId}}/read",
+            "description": "{{adminOwnNotificationId}} belongs to the Super Admin (set up in Happy Path step 6/7). The second user must not be able to touch it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark read with invalid id format",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{secondAccessToken}}" }],
+            "url": "{{baseUrl}}/notifications/not-a-valid-id/read"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List notifications with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/notifications"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Broadcast with missing message field",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/notifications/broadcast",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Missing message\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for message', () => pm.expect(pm.response.json().errors).to.have.property('message'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get unread count with invalid token",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer not-a-real-token" }],
+            "url": "{{baseUrl}}/notifications/unread-count"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

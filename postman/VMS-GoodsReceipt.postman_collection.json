@@ -1,0 +1,571 @@
+{
+  "info": {
+    "name": "VMS - Goods Receipt Module (Phase 8)",
+    "description": "Goods Receipt & Inspection recorded against a Purchase Order. Self-contained: the \"Happy Path\" folder logs in as the seeded Super Admin, creates a fresh Department + HOD + Department User, creates a Vendor, creates and approves a Quotation (kept at/under the default ₹50,000 CEO Approval Limit so a single CEO decision suffices), generates a Purchase Order from it, then records a Goods Receipt against that PO. This intentionally builds on the legacy (quotation-only) Purchase Order path for brevity — it does not re-run the full Phase 1-7 Requirement pipeline; the Requirement-originated Goods Receipt gate on Bill creation is covered by the backend's automated tests instead (goodsReceipt.test.ts / bill.test.ts). Run top-to-bottom. The \"Negative Cases\" folder runs after Happy Path and reuses its tokens/ids.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "superAdminEmail", "value": "superadmin@gmail.com" },
+    { "key": "superAdminPassword", "value": "123456789" },
+    { "key": "superAdminToken", "value": "" },
+    { "key": "runId", "value": "" },
+    { "key": "departmentName", "value": "" },
+    { "key": "departmentCode", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "" },
+    { "key": "hodToken", "value": "" },
+    { "key": "deptUserEmail", "value": "" },
+    { "key": "deptUserPassword", "value": "" },
+    { "key": "deptUserToken", "value": "" },
+    { "key": "ceoEmail", "value": "" },
+    { "key": "ceoPassword", "value": "" },
+    { "key": "ceoToken", "value": "" },
+    { "key": "directorEmail", "value": "" },
+    { "key": "directorPassword", "value": "" },
+    { "key": "directorToken", "value": "" },
+    { "key": "vendorId", "value": "" },
+    { "key": "quotationId", "value": "" },
+    { "key": "purchaseOrderId", "value": "" },
+    { "key": "secondPurchaseOrderId", "value": "" },
+    { "key": "goodsReceiptId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('runId')) {",
+                  "  const runId = Date.now().toString();",
+                  "  pm.collectionVariables.set('runId', runId);",
+                  "  pm.collectionVariables.set('departmentName', 'GRN Dept ' + runId);",
+                  "  pm.collectionVariables.set('departmentCode', 'GRD' + runId);",
+                  "  pm.collectionVariables.set('hodEmail', 'grn.hod.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('hodPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('deptUserEmail', 'grn.deptuser.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('deptUserPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('ceoEmail', 'grn.ceo.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('ceoPassword', 'Password123!');",
+                  "  pm.collectionVariables.set('directorEmail', 'grn.director.' + runId + '@vms.local');",
+                  "  pm.collectionVariables.set('directorPassword', 'Password123!');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('superAdminToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "2. Create Department with new HOD",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{departmentName}}\",\n  \"code\": \"{{departmentCode}}\",\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Test HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] }
+            }
+          ]
+        },
+        {
+          "name": "3. Create CEO (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test CEO\",\n  \"email\": \"{{ceoEmail}}\",\n  \"password\": \"{{ceoPassword}}\",\n  \"role\": \"ceo\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] }
+            }
+          ]
+        },
+        {
+          "name": "4. Create Director (Super Admin, forbidden-role test target later)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{superAdminToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Director\",\n  \"email\": \"{{directorEmail}}\",\n  \"password\": \"{{directorPassword}}\",\n  \"role\": \"director\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] }
+            }
+          ]
+        },
+        {
+          "name": "5. Login as HOD",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. HOD creates a Department User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{hodToken}}" }
+            ],
+            "url": "{{baseUrl}}/hod/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Department User\",\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] }
+            }
+          ]
+        },
+        {
+          "name": "7. Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('deptUserToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Login as CEO",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{ceoEmail}}\",\n  \"password\": \"{{ceoPassword}}\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('ceoToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Login as Director",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{directorEmail}}\",\n  \"password\": \"{{directorPassword}}\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('directorToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Create Vendor (Department User)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/vendors",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"GRN Test Vendor\",\n  \"contactPerson\": \"Jane Doe\",\n  \"phone\": \"9876543210\",\n  \"email\": \"grn.vendor@example.com\",\n  \"address\": \"123 Industrial Area\",\n  \"state\": \"Maharashtra\",\n  \"district\": \"Pune\",\n  \"city\": \"Pune\",\n  \"pincode\": \"411001\",\n  \"bankDetails\": {\n    \"bankName\": \"HDFC Bank\",\n    \"accountHolderName\": \"GRN Test Vendor\",\n    \"accountNumber\": \"123456789012\",\n    \"ifscCode\": \"HDFC0001234\"\n  },\n  \"category\": \"Raw Materials\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('vendorId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Create Quotation (at/under CEO Approval Limit)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendor\": \"{{vendorId}}\",\n  \"quotationDate\": \"2026-07-10\",\n  \"requiredDate\": \"2026-08-10\",\n  \"amount\": 40000,\n  \"gst\": 18,\n  \"currency\": \"INR\",\n  \"paymentTerms\": \"Net 30\",\n  \"deliveryTerms\": \"FOB destination\",\n  \"priority\": \"medium\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('quotationId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Submit Quotation",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/submit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "13. CEO approves",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ceoToken}}" }
+            ],
+            "url": "{{baseUrl}}/quotations/{{quotationId}}/decision",
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Quotation is Approved', () => pm.expect(body.data.status).to.eql('approved'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Generate Purchase Order from Approved Quotation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/purchase-orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotationId\": \"{{quotationId}}\",\n  \"items\": [\n    {\n      \"itemName\": \"Steel Rods\",\n      \"description\": \"12mm MS Steel Rods\",\n      \"quantity\": 100,\n      \"unitPrice\": 350,\n      \"gstRate\": 18,\n      \"gstAmount\": 6300,\n      \"taxAmount\": 0,\n      \"discount\": 0,\n      \"total\": 41300\n    }\n  ],\n  \"terms\": \"Standard terms and conditions apply\",\n  \"notes\": \"Deliver to main warehouse\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('purchaseOrderId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Check Goods Receipt does not exist yet",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/goods-receipts/by-po/{{purchaseOrderId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No Goods Receipt yet', () => pm.expect(pm.response.json().data).to.be.null);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Record Goods Receipt",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/goods-receipts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purchaseOrder\": \"{{purchaseOrderId}}\",\n  \"receivedDate\": \"2026-08-05\",\n  \"items\": [\n    {\n      \"itemName\": \"Steel Rods\",\n      \"orderedQuantity\": 100,\n      \"receivedQuantity\": 100,\n      \"condition\": \"good\"\n    }\n  ],\n  \"overallCondition\": \"good\",\n  \"remarks\": \"Delivered on time, no damage\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Goods Receipt recorded with a GRN number', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.grnNumber).to.match(/^GRN-/);",
+                  "  pm.expect(body.data.purchaseOrder).to.eql(pm.collectionVariables.get('purchaseOrderId'));",
+                  "  pm.expect(body.data.requirement).to.not.be.ok;",
+                  "});",
+                  "pm.collectionVariables.set('goodsReceiptId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Get Purchase Order — now shows the linked Goods Receipt",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/purchase-orders/{{purchaseOrderId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Purchase Order carries the goodsReceipt reference', () => pm.expect(body.data.goodsReceipt).to.be.ok);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18. List Goods Receipts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/goods-receipts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Recorded receipt is present in the list', () => {",
+                  "  pm.expect(body.data.some((g) => g.id === pm.collectionVariables.get('goodsReceiptId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Get Goods Receipt by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserToken}}" }],
+            "url": "{{baseUrl}}/goods-receipts/{{goodsReceiptId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the receipt created earlier', () => pm.expect(body.data.id).to.eql(pm.collectionVariables.get('goodsReceiptId')));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Record a second Goods Receipt for the same PO (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/goods-receipts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purchaseOrder\": \"{{purchaseOrderId}}\",\n  \"receivedDate\": \"2026-08-06\",\n  \"items\": [\n    {\n      \"itemName\": \"Steel Rods\",\n      \"orderedQuantity\": 100,\n      \"receivedQuantity\": 100,\n      \"condition\": \"good\"\n    }\n  ],\n  \"overallCondition\": \"good\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 409 — a Goods Receipt already exists for this PO', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record Goods Receipt as unauthorized role (Director)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{directorToken}}" }
+            ],
+            "url": "{{baseUrl}}/goods-receipts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purchaseOrder\": \"{{purchaseOrderId}}\",\n  \"receivedDate\": \"2026-08-06\",\n  \"items\": [\n    {\n      \"itemName\": \"Steel Rods\",\n      \"orderedQuantity\": 100,\n      \"receivedQuantity\": 100,\n      \"condition\": \"good\"\n    }\n  ],\n  \"overallCondition\": \"good\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 403 — Director cannot record Goods Receipt', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record Goods Receipt for a non-existent Purchase Order (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{deptUserToken}}" }
+            ],
+            "url": "{{baseUrl}}/goods-receipts",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purchaseOrder\": \"665f1c2b9b1d4c1a2c8e4a10\",\n  \"receivedDate\": \"2026-08-06\",\n  \"items\": [\n    {\n      \"itemName\": \"Steel Rods\",\n      \"orderedQuantity\": 100,\n      \"receivedQuantity\": 100,\n      \"condition\": \"good\"\n    }\n  ],\n  \"overallCondition\": \"good\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"] }
+            }
+          ]
+        },
+        {
+          "name": "List Goods Receipts with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/goods-receipts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"] }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

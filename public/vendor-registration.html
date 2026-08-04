@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vendor Registration</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #475569; font-size: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  label.optional::after { content: " (optional)"; font-weight: 400; color: #94a3b8; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; }
+  input:focus { outline: 2px solid #2563eb; border-color: transparent; }
+  fieldset { border: none; padding: 0; margin: 0 0 12px; }
+  legend { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    width: 100%; padding: 13px; border: none; border-radius: 10px;
+    background: #2563eb; color: #fff; font-size: 15px; font-weight: 600;
+    margin-top: 20px; cursor: pointer;
+  }
+  button:disabled { background: #94a3b8; cursor: not-allowed; }
+  .msg { padding: 12px 14px; border-radius: 10px; font-size: 14px; margin-bottom: 16px; }
+  .msg.error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .msg.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+  .center { text-align: center; padding: 40px 0; }
+  .hidden { display: none; }
+  .field-error { color: #b91c1c; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Vendor Registration</h1>
+    <div class="sub" id="subtitle">Loading…</div>
+  </header>
+
+  <div id="messages"></div>
+
+  <div id="loading" class="card center">Loading link…</div>
+
+  <div id="successScreen" class="card hidden">
+    <h2 style="margin-top:0;">Submitted</h2>
+    <p>Thank you — your details have been submitted and are awaiting verification by the requesting department. You will be contacted once your vendor record is finalized.</p>
+  </div>
+
+  <form id="form" class="hidden">
+    <div class="card">
+      <fieldset>
+        <legend>Company Details</legend>
+        <label for="name">Company Name</label>
+        <input id="name" name="name" required maxlength="150" />
+
+        <label for="contactPerson">Contact Person</label>
+        <input id="contactPerson" name="contactPerson" required maxlength="150" />
+
+        <div class="row">
+          <div>
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" required pattern="[6-9][0-9]{9}" maxlength="10" />
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" required />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="gstNumber" class="optional">GST Number</label>
+            <input id="gstNumber" name="gstNumber" maxlength="15" />
+          </div>
+          <div>
+            <label for="panNumber" class="optional">PAN Number</label>
+            <input id="panNumber" name="panNumber" maxlength="10" />
+          </div>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <fieldset>
+        <legend>Address</legend>
+        <label for="address">Address</label>
+        <input id="address" name="address" required />
+
+        <div class="row">
+          <div>
+            <label for="city">City</label>
+            <input id="city" name="city" required />
+          </div>
+          <div>
+            <label for="district">District</label>
+            <input id="district" name="district" required />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="state">State</label>
+            <input id="state" name="state" required />
+          </div>
+          <div>
+            <label for="pincode">Pincode</label>
+            <input id="pincode" name="pincode" required pattern="[1-9][0-9]{5}" maxlength="6" />
+          </div>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <fieldset>
+        <legend>Bank Details</legend>
+        <label for="bankName">Bank Name</label>
+        <input id="bankName" name="bankName" required />
+
+        <label for="accountHolderName">Account Holder Name</label>
+        <input id="accountHolderName" name="accountHolderName" required />
+
+        <div class="row">
+          <div>
+            <label for="accountNumber">Account Number</label>
+            <input id="accountNumber" name="accountNumber" required maxlength="20" />
+          </div>
+          <div>
+            <label for="ifscCode">IFSC Code</label>
+            <input id="ifscCode" name="ifscCode" required maxlength="11" />
+          </div>
+        </div>
+
+        <label for="upiId" class="optional">UPI ID</label>
+        <input id="upiId" name="upiId" />
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <fieldset>
+        <legend>Documents</legend>
+        <label for="gstCertificate">GST Certificate</label>
+        <input id="gstCertificate" name="gstCertificate" type="file" accept="application/pdf,image/png,image/jpeg" />
+
+        <label for="panCard">PAN Card</label>
+        <input id="panCard" name="panCard" type="file" accept="application/pdf,image/png,image/jpeg" />
+
+        <label for="cancelledCheque">Cancelled Cheque</label>
+        <input id="cancelledCheque" name="cancelledCheque" type="file" accept="application/pdf,image/png,image/jpeg" />
+
+        <label for="msmeCertificate" class="optional">MSME Certificate</label>
+        <input id="msmeCertificate" name="msmeCertificate" type="file" accept="application/pdf,image/png,image/jpeg" />
+      </fieldset>
+    </div>
+
+    <button id="submitBtn" type="submit">Submit for Verification</button>
+  </form>
+</div>
+
+<script src="vendor-registration.js"></script>
+</body>
+</html>

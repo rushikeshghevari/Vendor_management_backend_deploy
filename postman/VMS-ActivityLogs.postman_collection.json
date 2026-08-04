@@ -1,0 +1,429 @@
+{
+  "info": {
+    "name": "VMS - Activity Logs Module",
+    "description": "Generic action-audit trail (\"who did what to what, and from where\") — read-only, Super Admin or HOD only. Distinct from /audit-logs (PO/Bill/Quotation 3-way AI-match decisions) and /ai-audit-logs (Gemini verification run logs). There is no direct create endpoint: entries are a side effect of department/HOD/user/vendor/quotation/PO/bill mutations.\n\nHappy Path logs in as Super Admin and creates a Department with `createHod: true`, which alone produces two entries: `department_created` and `hod_assigned`. It then lists/filters activity logs as both Super Admin (sees everything) and the freshly-created HOD (scoped server-side to only their own department).\n\nNote: `activityLogService.record()` is fired-and-forgotten (not awaited) by the department controller so that a logging failure can never break the request that triggered it. In practice the Mongo write completes well within the time it takes Postman to send the next request, but if the \"List Activity Logs\" assertions ever flake immediately after department creation, add a short delay (Collection Runner \"Delay\" setting) between requests and re-run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "email", "value": "superadmin@gmail.com" },
+    { "key": "password", "value": "123456789" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "departmentId", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "" },
+    { "key": "hodUserId", "value": "" },
+    { "key": "hodAccessToken", "value": "" },
+    { "key": "deptUserEmail", "value": "" },
+    { "key": "deptUserPassword", "value": "" },
+    { "key": "deptUserAccessToken", "value": "" },
+    { "key": "fromDate", "value": "" },
+    { "key": "toDate", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns tokens', () => pm.expect(body.data.accessToken).to.be.a('string'));",
+                  "pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.data.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create Department with createHod:true (generates department_created + hod_assigned)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Activity Log Test Dept {{$timestamp}}\",\n  \"code\": \"ACT{{$timestamp}}\",\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Test HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('hodEmail', 'hod.' + Date.now() + '@vms.local');",
+                  "pm.collectionVariables.set('hodPassword', 'Passw0rd123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Department created with an HOD assigned', () => pm.expect(body.data.hod).to.be.a('string'));",
+                  "pm.collectionVariables.set('departmentId', body.data.id);",
+                  "pm.collectionVariables.set('hodUserId', body.data.hod);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Create Department User (for the wrong-role negative case)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Dept User\",\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\",\n  \"role\": \"department_user\",\n  \"department\": \"{{departmentId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('deptUserEmail', 'dept.user.' + Date.now() + '@vms.local');",
+                  "pm.collectionVariables.set('deptUserPassword', 'Passw0rd123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('User created with department_user role', () => pm.expect(pm.response.json().data.role).to.eql('department_user'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. List activity logs as Super Admin (sees all departments)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const deptId = pm.collectionVariables.get('departmentId');",
+                  "pm.test('Contains department_created and hod_assigned entries for our department', () => {",
+                  "  const forOurDept = body.data.filter(e => e.department && e.department.id === deptId);",
+                  "  pm.expect(forOurDept.some(e => e.action === 'department_created')).to.be.true;",
+                  "  pm.expect(forOurDept.some(e => e.action === 'hod_assigned')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Filter activity logs by action=department_created",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?action=department_created"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Every result has action department_created, and our department is among them', () => {",
+                  "  pm.expect(body.data.every(e => e.action === 'department_created')).to.be.true;",
+                  "  pm.expect(body.data.some(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Filter activity logs by action=hod_assigned",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?action=hod_assigned"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Every result has action hod_assigned, and our department is among them', () => {",
+                  "  pm.expect(body.data.every(e => e.action === 'hod_assigned')).to.be.true;",
+                  "  pm.expect(body.data.some(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Filter activity logs by from/to date range",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?from={{fromDate}}&to={{toDate}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const now = new Date();",
+                  "const from = new Date(now.getTime() - 10 * 60 * 1000);",
+                  "const to = new Date(now.getTime() + 10 * 60 * 1000);",
+                  "pm.collectionVariables.set('fromDate', from.toISOString());",
+                  "pm.collectionVariables.set('toDate', to.toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Our department_created entry falls inside the last 10 minutes', () => {",
+                  "  pm.expect(body.data.some(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Filter activity logs by department (Super Admin)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?department={{departmentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Every result belongs to the requested department', () => {",
+                  "  pm.expect(body.data.length).to.be.above(0);",
+                  "  pm.expect(body.data.every(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Login as the new HOD",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. List activity logs as HOD (auto-scoped to own department)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hodAccessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Every visible entry belongs to the HOD\\'s own department', () => {",
+                  "  pm.expect(body.data.length).to.be.above(0);",
+                  "  pm.expect(body.data.every(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});",
+                  "pm.test('Includes the hod_assigned entry for this HOD', () => {",
+                  "  pm.expect(body.data.some(e => e.action === 'hod_assigned')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. List activity logs as HOD with a department filter (server-side ignores it)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hodAccessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?department=000000000000000000000000",
+            "description": "The `department` query param is documented as Super Admin-only and ignored for a HOD caller — the HOD should still only see their own department's entries, not the bogus one requested."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Still scoped to the HOD\\'s own department, not the requested one', () => {",
+                  "  pm.expect(body.data.every(e => e.department && e.department.id === pm.collectionVariables.get('departmentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Login as Department User (for the wrong-role negative case)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{deptUserEmail}}\",\n  \"password\": \"{{deptUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('deptUserAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Access activity logs as department_user (wrong role)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{deptUserAccessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Access activity logs with no token",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/activity-logs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter by an invalid action value",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?action=not_a_real_action"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for action', () => pm.expect(pm.response.json().errors).to.have.property('action'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter by a malformed department id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/activity-logs?department=not-an-id"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for department', () => pm.expect(pm.response.json().errors).to.have.property('department'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

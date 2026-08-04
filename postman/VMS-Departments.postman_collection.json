@@ -1,0 +1,545 @@
+{
+  "info": {
+    "name": "VMS - Departments Module",
+    "description": "Department CRUD, per-department analytics, and HOD assignment/transfer for the Vendor Management System backend. Run requests top-to-bottom in the \"Happy Path\" folder — it logs in as Super Admin, creates a department with an inline HOD, then reads/updates/transfers it. The \"Negative Cases\" folder is independent but assumes a Super Admin login has already happened (run Happy Path first, or run request 1 of it) so {{accessToken}} is populated.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "email", "value": "superadmin@gmail.com" },
+    { "key": "password", "value": "123456789" },
+    { "key": "accessToken", "value": "" },
+    { "key": "departmentId", "value": "" },
+    { "key": "departmentCode", "value": "" },
+    { "key": "hodUserId", "value": "" },
+    { "key": "hodEmail", "value": "" },
+    { "key": "hodPassword", "value": "Password123!" },
+    { "key": "secondDepartmentId", "value": "" },
+    { "key": "secondHodUserId", "value": "" },
+    { "key": "hodAccessToken", "value": "" },
+    { "key": "departmentUserEmail", "value": "" },
+    { "key": "departmentUserPassword", "value": "Password123!" },
+    { "key": "departmentUserAccessToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns an access token', () => {",
+                  "  pm.expect(body.data.accessToken).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('accessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create department with inline HOD",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Procurement {{$timestamp}}\",\n  \"code\": \"PROC{{$timestamp}}\",\n  \"description\": \"Handles vendor procurement\",\n  \"departmentHead\": \"Jane Doe\",\n  \"isActive\": true,\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Procurement HOD\",\n    \"email\": \"{{hodEmail}}\",\n    \"password\": \"{{hodPassword}}\",\n    \"phone\": \"9876543210\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('hodEmail', `proc.hod.${Date.now()}@vms.local`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns created department with hod id', () => {",
+                  "  pm.expect(body.data._id).to.be.a('string');",
+                  "  pm.expect(body.data.hod).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('departmentId', body.data._id);",
+                  "pm.collectionVariables.set('departmentCode', body.data.code);",
+                  "pm.collectionVariables.set('hodUserId', body.data.hod);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Create a second department (for transfer-hod target testing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Logistics {{$timestamp}}\",\n  \"code\": \"LOG{{$timestamp}}\",\n  \"description\": \"Handles logistics\",\n  \"isActive\": true,\n  \"createHod\": true,\n  \"hod\": {\n    \"name\": \"Logistics HOD\",\n    \"email\": \"log.hod.{{$timestamp}}@vms.local\",\n    \"password\": \"Password123!\",\n    \"phone\": \"9876543211\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('secondDepartmentId', body.data._id);",
+                  "pm.collectionVariables.set('secondHodUserId', body.data.hod);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. List departments",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/departments?page=1&limit=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns an array with pagination', () => {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "  pm.expect(body.pagination).to.have.property('total');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Get department by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/departments/{{departmentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the created department with populated hod', () => {",
+                  "  pm.expect(body.data._id).to.eql(pm.collectionVariables.get('departmentId'));",
+                  "  pm.expect(body.data.hod._id).to.eql(pm.collectionVariables.get('hodUserId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Get department analytics",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/departments/{{departmentId}}/analytics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns full analytics shape', () => {",
+                  "  pm.expect(body.data).to.have.property('activeUsers');",
+                  "  pm.expect(body.data).to.have.property('inactiveUsers');",
+                  "  pm.expect(body.data).to.have.property('pendingApprovals');",
+                  "  pm.expect(body.data).to.have.property('rejected');",
+                  "  pm.expect(body.data).to.have.property('completed');",
+                  "  pm.expect(body.data.weeklyActivity).to.be.an('array');",
+                  "  pm.expect(body.data.monthlyTrend).to.be.an('array');",
+                  "  pm.expect(body.data.vendorGrowth).to.be.an('array');",
+                  "  pm.expect(body.data.quotationStatusBreakdown).to.be.an('array');",
+                  "  pm.expect(body.data.billStatusBreakdown).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Update department",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments/{{departmentId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Handles vendor procurement and sourcing\",\n  \"departmentHead\": \"Jane A. Doe\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the updated department', () => {",
+                  "  pm.expect(body.data.description).to.eql('Handles vendor procurement and sourcing');",
+                  "  pm.expect(body.data.departmentHead).to.eql('Jane A. Doe');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Transfer HOD to a newly-created user",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments/{{departmentId}}/transfer-hod",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newHodId\": \"{{secondHodUserId}}\",\n  \"demoteOldHod\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Department now shows the new hod', () => {",
+                  "  pm.expect(body.data.hod._id).to.eql(pm.collectionVariables.get('secondHodUserId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Setup: Login as HOD (from Happy Path department)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{hodEmail}}\",\n  \"password\": \"{{hodPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 (requires Happy Path folder to have run first)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('hodAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: Create a Department User (as Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Negative Case Dept User\",\n  \"email\": \"{{departmentUserEmail}}\",\n  \"password\": \"{{departmentUserPassword}}\",\n  \"role\": \"department_user\",\n  \"department\": \"{{departmentId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('departmentUserEmail', `dept.user.${Date.now()}@vms.local`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 (requires Happy Path folder to have run first)', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: Login as Department User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{departmentUserEmail}}\",\n  \"password\": \"{{departmentUserPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('departmentUserAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create department as non-Super-Admin (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{hodAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Unauthorized Dept\",\n  \"code\": \"UNAUTH\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create department with duplicate code (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Duplicate Code Dept\",\n  \"code\": \"{{departmentCode}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create department with missing required fields (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Missing name and code\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get analytics as Department User (403)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{departmentUserAccessToken}}" }],
+            "url": "{{baseUrl}}/departments/{{departmentId}}/analytics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transfer HOD with invalid newHodId (400/404)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments/{{departmentId}}/transfer-hod",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newHodId\": \"not-a-valid-object-id\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400 (malformed id fails validation)', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transfer HOD with well-formed but non-existent newHodId (404)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/departments/{{departmentId}}/transfer-hod",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newHodId\": \"64b64b64b64b64b64b64b64\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404 (well-formed id, no such user)', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get department with malformed id (400)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/departments/not-a-valid-object-id"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get non-existent department (404)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/departments/64b64b64b64b64b64b64b64"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List departments with no token (401)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/departments"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

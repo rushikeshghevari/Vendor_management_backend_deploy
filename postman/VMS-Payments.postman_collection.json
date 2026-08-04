@@ -1,0 +1,763 @@
+{
+  "info": {
+    "name": "VMS - Payments Module",
+    "description": "Payment lifecycle endpoints: creation, method capture, status transitions (payment_pending -> processing -> paid -> completed/failed), role-scoped dashboard stats, and the CEO/Director by-quotation lookup.\n\nIMPORTANT — payment creation requires a Bill that is dual-gated: `status: 'verified'` (Accounts has signed off) AND `directorFinancialDecision: 'approved'` (Director Financial Approval already granted) — see payment.service.ts `create()`. Building that full Vendor -> Quotation -> Purchase Order -> Bill chain end-to-end requires AI 3-way verification (an external Gemini call) plus real PDF file uploads, which isn't practical to automate here. Before running this collection, set the collection variables `billId` and `billId2` to two real, distinct Bill ids that each meet both conditions (create them via the Bills/Quotations flow or the mobile app). `billId` drives the success path (start-processing -> mark-paid -> mark-completed); `billId2` drives a second, independent payment used to exercise mark-failed without disturbing the first payment's lifecycle.\n\nRun \"Happy Path\" top-to-bottom after setting billId/billId2. \"Negative Cases\" mostly stand alone, except the two invalid-transition checks which intentionally reuse the (by-then completed) paymentId from the Happy Path run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5007/api/v1" },
+    { "key": "email", "value": "superadmin@gmail.com" },
+    { "key": "password", "value": "123456789" },
+    { "key": "adminAccessToken", "value": "" },
+    { "key": "adminRefreshToken", "value": "" },
+    { "key": "superAdminUserId", "value": "" },
+    { "key": "paymentDeptEmail", "value": "" },
+    { "key": "paymentDeptPassword", "value": "" },
+    { "key": "paymentDeptUserId", "value": "" },
+    { "key": "paymentAccessToken", "value": "" },
+    { "key": "accountsEmail", "value": "" },
+    { "key": "accountsPassword", "value": "" },
+    { "key": "accountsUserId", "value": "" },
+    { "key": "accountsAccessToken", "value": "" },
+    { "key": "billId", "value": "", "description": "SET ME — id of an existing Bill in `verified` status" },
+    { "key": "billId2", "value": "", "description": "SET ME — id of a second, distinct Bill in `verified` status (used for the mark-failed demo)" },
+    { "key": "quotationId", "value": "" },
+    { "key": "paymentId", "value": "" },
+    { "key": "paymentId2", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "1. Login as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns tokens and user', () => {",
+                  "  pm.expect(body.data.accessToken).to.be.a('string');",
+                  "  pm.expect(body.data.user.id).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('adminAccessToken', body.data.accessToken);",
+                  "pm.collectionVariables.set('adminRefreshToken', body.data.refreshToken);",
+                  "pm.collectionVariables.set('superAdminUserId', body.data.user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create Payment Department user",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Payment Dept User\",\n  \"email\": \"{{paymentDeptEmail}}\",\n  \"password\": \"{{paymentDeptPassword}}\",\n  \"role\": \"payment_department\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('paymentDeptEmail', 'payment.dept.' + Date.now() + '@vms.local');",
+                  "pm.collectionVariables.set('paymentDeptPassword', 'Passw0rd123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('User created with payment_department role', () => {",
+                  "  pm.expect(body.data.role).to.eql('payment_department');",
+                  "});",
+                  "pm.collectionVariables.set('paymentDeptUserId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Create Accounts user",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Accounts User\",\n  \"email\": \"{{accountsEmail}}\",\n  \"password\": \"{{accountsPassword}}\",\n  \"role\": \"accounts\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('accountsEmail', 'accounts.' + Date.now() + '@vms.local');",
+                  "pm.collectionVariables.set('accountsPassword', 'Passw0rd123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('User created with accounts role', () => {",
+                  "  pm.expect(body.data.role).to.eql('accounts');",
+                  "});",
+                  "pm.collectionVariables.set('accountsUserId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Get Bill (to read its linked quotation)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/bills/{{billId}}",
+            "description": "Requires the `billId` collection variable to already be set to a real Bill id with `status: 'verified'` AND `directorFinancialDecision: 'approved'`. Captures the bill's `quotation` id for the by-quotation lookup step later."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Bill is verified, director-approved, and has a linked quotation', () => {",
+                  "  pm.expect(body.data.quotation).to.be.a('string');",
+                  "  pm.expect(body.data.status).to.eql('verified');",
+                  "  pm.expect(body.data.directorFinancialDecision).to.eql('approved');",
+                  "});",
+                  "pm.collectionVariables.set('quotationId', body.data.quotation);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Login as Payment Department user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{paymentDeptEmail}}\",\n  \"password\": \"{{paymentDeptPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('paymentAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Create payment for bill",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bill\": \"{{billId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Payment created in payment_pending status', () => {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.paymentCode).to.match(/^PAY-/);",
+                  "  pm.expect(body.data.status).to.eql('payment_pending');",
+                  "  pm.expect(body.data.bill).to.eql(pm.collectionVariables.get('billId'));",
+                  "});",
+                  "pm.collectionVariables.set('paymentId', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Start processing (capture payment method)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/start-processing",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"bank_transfer\",\n  \"bankName\": \"HDFC Bank\",\n  \"accountNumber\": \"000123456789\",\n  \"ifsc\": \"HDFC0000123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Payment moved to processing', () => {",
+                  "  pm.expect(body.data.status).to.eql('processing');",
+                  "  pm.expect(body.data.paymentMethod).to.eql('bank_transfer');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Mark paid",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/mark-paid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"utrNumber\": \"UTR{{$timestamp}}\",\n  \"paymentDate\": \"{{$isoTimestamp}}\",\n  \"remarks\": \"Paid via NEFT (Postman test)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Payment marked paid', () => {",
+                  "  pm.expect(body.data.status).to.eql('paid');",
+                  "  pm.expect(body.data.paymentDate).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Mark completed",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/mark-completed"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Payment marked completed', () => pm.expect(body.data.status).to.eql('completed'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Get payment by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/{{paymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Full payment detail with history', () => {",
+                  "  pm.expect(body.data.status).to.eql('completed');",
+                  "  pm.expect(body.data.history).to.be.an('array');",
+                  "  pm.expect(body.data.history.length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. List payments (status=completed)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments?status=completed"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns our completed payment', () => {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "  pm.expect(body.data.some(p => p.id === pm.collectionVariables.get('paymentId'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Payment Department dashboard stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/stats/payment-department"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a stats object', () => pm.expect(pm.response.json().data).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. Login as Accounts user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{accountsEmail}}\",\n  \"password\": \"{{accountsPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accountsAccessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Accounts dashboard stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accountsAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/stats/accounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a stats object', () => pm.expect(pm.response.json().data).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Get payment by quotation (CEO/Director embedded lookup)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accountsAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/by-quotation/{{quotationId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the payment linked to the quotation', () => {",
+                  "  pm.expect(body.data.id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Super Admin dashboard stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/stats/super-admin"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a stats object', () => pm.expect(pm.response.json().data).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Create second payment (for mark-failed demo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bill\": \"{{billId2}}\"\n}"
+            },
+            "description": "Requires the `billId2` collection variable to be set to a second, distinct Bill id in `verified` status."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Second payment created', () => pm.expect(body.data.status).to.eql('payment_pending'));",
+                  "pm.collectionVariables.set('paymentId2', body.data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18. Start processing second payment (UPI)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId2}}/start-processing",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"upi\",\n  \"upiId\": \"vendor@upi\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Second payment moved to processing', () => pm.expect(body.data.status).to.eql('processing'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Mark second payment as failed",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId2}}/mark-failed",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"failureReason\": \"upi_failed\",\n  \"remarks\": \"UPI gateway timeout (Postman test)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Payment marked failed with retryCount incremented', () => {",
+                  "  pm.expect(body.data.status).to.eql('failed');",
+                  "  pm.expect(body.data.retryCount).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Cases",
+      "item": [
+        {
+          "name": "Create payment with wrong role (Accounts)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accountsAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bill\": \"{{billId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment for a non-existent bill",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bill\": \"000000000000000000000000\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment with malformed bill id",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bill\": \"not-an-id\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for bill', () => pm.expect(pm.response.json().errors).to.have.property('bill'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start processing with invalid payment method",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/start-processing",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"bitcoin\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start processing on an already-completed payment (invalid transition)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/start-processing",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"bank_transfer\"\n}"
+            },
+            "description": "Relies on the Happy Path having already run, so {{paymentId}} is a payment in `completed` status."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 409', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark paid without required paymentDate",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId}}/mark-paid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"utrNumber\": \"UTR123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has a field error for paymentDate', () => pm.expect(pm.response.json().errors).to.have.property('paymentDate'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark failed with invalid failure reason",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/payments/{{paymentId2}}/mark-failed",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"failureReason\": \"alien_invasion\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Access my-payments stats with wrong role (Payment Department)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/stats/my-payments"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payment with invalid id format",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/not-a-valid-id"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payment with valid but nonexistent id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{paymentAccessToken}}" }],
+            "url": "{{baseUrl}}/payments/000000000000000000000000"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
