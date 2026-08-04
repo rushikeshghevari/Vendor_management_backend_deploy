@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "seed": "tsx src/scripts/seed.ts",
+    "reset:test-data": "tsx src/scripts/resetTestData.ts",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },

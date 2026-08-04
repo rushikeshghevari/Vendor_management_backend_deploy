@@ -195,9 +195,16 @@ export const vendorRegistrationService = {
     const review = await requireApprovedReview(requirementId);
     const quotation = await resolveWinningQuotation(requirementId, review);
 
-    const matched = await findMatchingVendor(quotation);
-    if (!matched || matched._id.toString() !== vendorId) {
-      throw ApiError.badRequest('This vendor no longer matches the winning quotation on this requirement');
+    // Prefer the auto-detected match (by the winning quotation's vendor ref / email / phone);
+    // otherwise fall back to any existing vendor the caller explicitly picked from the full
+    // Vendor list ("Show Vendors") — the Department User may recognize the same real-world
+    // vendor even when the quotation's own contact details don't line up with it.
+    const autoMatched = await findMatchingVendor(quotation);
+    const matched = autoMatched && autoMatched._id.toString() === vendorId
+      ? autoMatched
+      : await Vendor.findById(vendorId);
+    if (!matched) {
+      throw ApiError.badRequest('Vendor not found');
     }
 
     await Requirement.updateOne(

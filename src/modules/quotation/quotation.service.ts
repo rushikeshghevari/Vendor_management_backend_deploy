@@ -299,6 +299,23 @@ async function notifyOfDecision(
       dedupKey: `quotation_approved:${relatedRecord}`,
     },
   );
+
+  // FYI broadcast — Accounts/Payment/CEO don't act on a quotation, but the Department User
+  // asked for visibility into this milestone well before it reaches them at the Bill/Payment
+  // stage. Skip the CEO when they were the one who just decided — they already know.
+  const fyiRoles: Role[] = route === 'ceo' ? [ROLES.ACCOUNTS, ROLES.PAYMENT_DEPARTMENT] : [ROLES.ACCOUNTS, ROLES.PAYMENT_DEPARTMENT, ROLES.CEO];
+  const fyiRecipients = (await Promise.all(fyiRoles.map((role) => notificationService.findActiveUsersByRole(role)))).flat();
+  if (fyiRecipients.length > 0) {
+    await notificationService.notifyUsers(fyiRecipients, {
+      title: 'Quotation Approved',
+      message: `${quotation.quotationCode} was fully approved (${roleLabel}: ${approverName}).`,
+      module: 'quotation',
+      relatedRecord,
+      notificationType: 'quotation_approved_fyi',
+      sender: actor.id,
+      dedupKey: `quotation_approved_fyi:${relatedRecord}`,
+    });
+  }
 }
 
 /**

@@ -84,9 +84,11 @@ router.get(
  *   post:
  *     tags: [Vendor Registration]
  *     summary: >
- *       Finalize this requirement against a Vendor that already exists (per
- *       GET .../vendor-registration/status), instead of registering a duplicate. Sets
- *       Requirement.status = vendor_finalized, same as a fresh registration.
+ *       Finalize this requirement against a Vendor that already exists — either the
+ *       auto-detected match (per GET .../vendor-registration/status) or any active vendor the
+ *       caller picked manually from the full Vendor list ("Show Vendors") — instead of
+ *       registering a duplicate. Sets Requirement.status = vendor_finalized, same as a fresh
+ *       registration.
  *     parameters:
  *       - in: path
  *         name: id
@@ -103,7 +105,7 @@ router.get(
  *               vendorId: { type: string }
  *     responses:
  *       200: { description: Vendor linked; requirement advanced to vendor_finalized }
- *       400: { description: Requirement is not Director-approved, or vendorId no longer matches the winning quotation }
+ *       400: { description: Requirement is not Director-approved, or vendorId does not refer to an existing vendor }
  *       401: { description: Missing or invalid access token }
  *       403: { description: Caller is not a Department User or Super Admin }
  *       404: { description: Requirement not found }

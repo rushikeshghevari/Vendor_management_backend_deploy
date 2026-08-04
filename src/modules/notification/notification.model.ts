@@ -26,6 +26,9 @@ export const NOTIFICATION_TYPES = [
   'quotation_rejected',
   'quotation_resubmitted',
   'quotation_approved',
+  // FYI copy of 'quotation_approved' sent to Accounts/Payment/CEO — same event, a different
+  // audience than the Department User's own "your quotation was approved" notification.
+  'quotation_approved_fyi',
   // Bill — business lifecycle
   'bill_submitted',
   'bill_reviewed',
