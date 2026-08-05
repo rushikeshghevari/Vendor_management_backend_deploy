@@ -218,6 +218,32 @@ export const userController = {
     const userId = req.user!.id;
     const role   = req.user!.role as Role;
 
+    // A physical device can only be logged in as one user at a time. If this deviceId is
+    // still registered under any OTHER user — e.g. a shared test phone switched to a
+    // different account without logging out first, or the app was uninstalled instead of
+    // logged out — that stale entry must be purged from every account, not just this one.
+    // Otherwise every account that was ever logged in on this device keeps receiving its
+    // pushes forever, regardless of role (the reported "notifications go to everyone").
+    const staleOwners = await User.find({ 'fcmTokens.deviceId': deviceId, _id: { $ne: userId } })
+      .select('_id role department fcmTokens')
+      .lean();
+    for (const staleOwner of staleOwners) {
+      const staleEntry = staleOwner.fcmTokens?.find((t) => t.deviceId === deviceId);
+      if (staleEntry?.token) {
+        unsubscribeFromAllTopics(
+          [staleEntry.token],
+          staleOwner.role as Role,
+          staleOwner.department?.toString(),
+        ).catch(() => null);
+      }
+    }
+    if (staleOwners.length > 0) {
+      await User.updateMany(
+        { 'fcmTokens.deviceId': deviceId, _id: { $ne: userId } },
+        { $pull: { fcmTokens: { deviceId } } },
+      );
+    }
+
     // Remove stale entry for this deviceId before re-registering
     await User.findByIdAndUpdate(userId, { $pull: { fcmTokens: { deviceId } } });
     const updated = await User.findByIdAndUpdate(
