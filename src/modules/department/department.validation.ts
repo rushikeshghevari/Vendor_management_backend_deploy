@@ -16,6 +16,7 @@ export const createDepartmentSchema = z
     description: z.string().trim().max(500).optional(),
     departmentHead: z.string().trim().max(100).optional(),
     isActive: z.boolean().optional(),
+    isRequirementTarget: z.boolean().optional(),
     // Optional HOD assignment at creation time — at most one of the two.
     createHod: z.boolean().optional(),
     hod: newHodSchema.optional(),
@@ -36,6 +37,7 @@ export const updateDepartmentSchema = z.object({
   description: z.string().trim().max(500).optional(),
   departmentHead: z.string().trim().max(100).optional(),
   isActive: z.boolean().optional(),
+  isRequirementTarget: z.boolean().optional(),
 });
 
 export const updateDepartmentStatusSchema = z.object({

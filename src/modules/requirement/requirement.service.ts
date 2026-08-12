@@ -42,28 +42,71 @@ async function generateRequirementCode(departmentId: string): Promise<string> {
   return `${codePrefix}${String(sequence).padStart(3, '0')}`;
 }
 
+/** Falls back to a readable label built from the item names when the requester didn't type a title. */
+function deriveTitleFromItems(items: { itemName: string }[]): string {
+  const names = items.map((item) => item.itemName);
+  if (names.length <= 2) return names.join(' & ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+}
+
+/** Merges another AND-ed condition into `filter` without clobbering one already there (e.g.
+ *  `list()`'s search `$or` and a role's own `$or` scoping would otherwise collide on the same
+ *  top-level `$or` key — each gets its own `$and` entry instead). */
+function addAndCondition(filter: Record<string, unknown>, condition: Record<string, unknown>): void {
+  const existing = filter.$and as Record<string, unknown>[] | undefined;
+  filter.$and = existing ? [...existing, condition] : [condition];
+}
+
+/** Matches a requirement currently sitting in `actor.department` that was routed in from a
+ *  *different* department (`requestedByDepartment` — see requirement.model.ts — differs from
+ *  the current `department`), as opposed to one of the department's own peers' own requests.
+ *  Shared by every "widen access for the receiving department" check below so a plain
+ *  same-department co-worker's own requirement stays private, matching the pre-routing
+ *  behavior, while a genuinely routed-in one opens up. */
+function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
+  return { department: actor.department, requestedByDepartment: { $ne: actor.department } };
+}
+
 /**
- * Read-visibility filter — a Department User sees only requirements they personally
- * created; an HOD sees every requirement in their department (read-only per Phase 1 —
- * see docs/PHASE1_REQUIREMENT_MODULE.md); a Director sees everything (read-only, no
- * scoping — will narrow to "awaiting comparison" once that step exists); Super Admin
- * sees everything.
+ * Read-visibility filter — a Department User sees requirements they personally created, plus
+ * any routed into their own department by another department's user (see `targetDepartment`
+ * in requirement.validation.ts) — once routed, the receiving department owns it operationally
+ * even though someone else originally requested it. A same-department co-worker's own
+ * requirement stays invisible, same as before this existed. An HOD sees every requirement in
+ * their department (read-only per Phase 1 — see docs/PHASE1_REQUIREMENT_MODULE.md); a Director
+ * sees everything (read-only, no scoping — will narrow to "awaiting comparison" once that step
+ * exists); Super Admin sees everything.
  */
 function scopeToOwner(actor: Actor, filter: Record<string, unknown>): void {
   if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
+    addAndCondition(filter, { $or: [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)] });
   } else if (actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }
 }
 
 /**
- * Mutation-scope filter — only a Department User (their own records) or Super Admin (any
- * record) can write. HOD has no write access in Phase 1 (view + optional approval is
- * deferred — see docs/PHASE1_REQUIREMENT_MODULE.md), so it is deliberately absent here.
+ * Mutation-scope filter for draft-stage actions (edit/submit/delete) — only the Department
+ * User who personally created the requirement (or Super Admin) may still touch it while it's
+ * a draft. HOD has no write access here in Phase 1 (view + optional approval is deferred —
+ * see docs/PHASE1_REQUIREMENT_MODULE.md).
  */
 function ownershipFilter(actor: Actor): Record<string, unknown> {
   return actor.role === ROLES.SUPER_ADMIN ? {} : { createdBy: actor.id };
+}
+
+/**
+ * Mutation-scope filter for `submitToDirector` specifically — by this stage the requirement
+ * has already left the creator's hands and is being actively worked by whichever department
+ * it's currently sitting in: its own team, or (only when genuinely routed in — see
+ * `routedIntoOwnDepartment`) another department's. HOD is included here (unlike
+ * `ownershipFilter`) because HOD already does real write work at this stage via
+ * quotation.service.ts's `createForRequirement`, so being unable to then submit those
+ * quotations to the Director would be an inconsistent dead end.
+ */
+function departmentWriteFilter(actor: Actor): Record<string, unknown> {
+  if (actor.role === ROLES.SUPER_ADMIN) return {};
+  return { $or: [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)] };
 }
 
 export const requirementService = {
@@ -75,18 +118,48 @@ export const requirementService = {
       throw ApiError.badRequest('You must belong to a department to create a requirement');
     }
 
-    const requirementNumber = await generateRequirementCode(actor.department);
+    // Defaults to the requester's own department; `targetDepartment` lets them route it to a
+    // different one instead (e.g. an IT user requesting furniture routes to Admin) — only
+    // departments Super Admin has opted in via isRequirementTarget are valid targets, so this
+    // can never be used to silently misfile a requirement into an arbitrary department.
+    let department = actor.department;
+    if (input.targetDepartment) {
+      const targetDept = await Department.findOne({
+        _id: input.targetDepartment,
+        isActive: true,
+        isRequirementTarget: true,
+      }).select('_id');
+      if (!targetDept) throw ApiError.badRequest('Selected department is not a valid requirement target');
+      department = targetDept.id;
+    }
 
-    const items = input.items.map((item) => ({
-      ...item,
-      estimatedAmount: item.estimatedAmount || item.quantity * item.estimatedRate,
-    }));
+    const requirementNumber = await generateRequirementCode(department);
+
+    // unit/estimatedRate are optional on input — the requester only says what's needed and how
+    // much; a real unit/rate gets attached later during quotation collection.
+    const items = input.items.map((item) => {
+      const estimatedRate = item.estimatedRate ?? 0;
+      return {
+        ...item,
+        unit: item.unit || 'pcs',
+        estimatedRate,
+        estimatedAmount: item.estimatedAmount || item.quantity * estimatedRate,
+      };
+    });
+
+    const { targetDepartment: _targetDepartment, title, budget, requiredDate, ...rest } = input;
 
     return Requirement.create({
-      ...input,
+      ...rest,
+      // Derived when the requester didn't set them — see createRequirementSchema's comment for
+      // why: budget/date are decided downstream, and the title is just a label for lists/PDFs.
+      title: title || deriveTitleFromItems(items),
+      budget: budget ?? items.reduce((sum, item) => sum + item.estimatedAmount, 0),
+      requiredDate: requiredDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       items,
       requirementNumber,
-      department: actor.department,
+      department,
+      requestedByDepartment: actor.department,
       createdBy: actor.id,
       status: REQUIREMENT_STATUS.DRAFT,
     });
@@ -100,10 +173,12 @@ export const requirementService = {
     if (query.priority) filter.priority = query.priority;
     if (query.department && actor.role === ROLES.SUPER_ADMIN) filter.department = query.department;
     if (query.search) {
-      filter.$or = [
-        { requirementNumber: new RegExp(escapeRegex(String(query.search).trim()), 'i') },
-        { title: new RegExp(escapeRegex(String(query.search).trim()), 'i') },
-      ];
+      addAndCondition(filter, {
+        $or: [
+          { requirementNumber: new RegExp(escapeRegex(String(query.search).trim()), 'i') },
+          { title: new RegExp(escapeRegex(String(query.search).trim()), 'i') },
+        ],
+      });
     }
 
     scopeToOwner(actor, filter);
@@ -111,7 +186,10 @@ export const requirementService = {
     const [items, total] = await Promise.all([
       Requirement.find(filter)
         .populate('department', 'name code')
-        .populate('createdBy', 'name email')
+        // `department` (nested) is the requester's own — surfaced so the receiving
+        // department can tell a routed-in requirement (see targetDepartment in
+        // requirement.validation.ts) apart from one raised by their own team.
+        .populate({ path: 'createdBy', select: 'name email department', populate: { path: 'department', select: 'name' } })
         .populate('submittedBy', 'name email')
         .sort({ createdAt: -1 })
         .skip(pagination.skip)
@@ -141,7 +219,7 @@ export const requirementService = {
 
     const requirement = await Requirement.findOne(filter)
       .populate('department', 'name code')
-      .populate('createdBy', 'name email')
+      .populate({ path: 'createdBy', select: 'name email department', populate: { path: 'department', select: 'name' } })
       .populate('submittedBy', 'name email');
 
     if (!requirement) throw ApiError.notFound('Requirement not found');
@@ -153,10 +231,15 @@ export const requirementService = {
       throw ApiError.forbidden('Only a Department User can edit a requirement');
     }
 
-    const items = input.items?.map((item) => ({
-      ...item,
-      estimatedAmount: item.estimatedAmount || item.quantity * item.estimatedRate,
-    }));
+    const items = input.items?.map((item) => {
+      const estimatedRate = item.estimatedRate ?? 0;
+      return {
+        ...item,
+        unit: item.unit || 'pcs',
+        estimatedRate,
+        estimatedAmount: item.estimatedAmount || item.quantity * estimatedRate,
+      };
+    });
 
     const requirement = await Requirement.findOneAndUpdate(
       {
@@ -194,22 +277,23 @@ export const requirementService = {
   },
 
   /**
-   * The Department User explicitly hands the requirement over to the Director — the only way
-   * a requirement ever enters Director Review from here on. Locks quotation upload (see the
-   * `createForRequirement` status gate in quotation.service.ts) and is the trigger point for
-   * the `requirement_ready_for_review` notification (moved here from "first quotation
-   * uploaded" — see requirement.controller.ts). Reachable an unlimited number of times: a
-   * Director's "Send Back" decision returns the requirement to QUOTATION_COLLECTION, and the
-   * Department User can submit again after revising.
+   * The department currently working the requirement — a Department User or HOD, either its
+   * own or (if routed via targetDepartment) the receiving department's — explicitly hands it
+   * over to the Director. The only way a requirement ever enters Director Review from here on.
+   * Locks quotation upload (see the `createForRequirement` status gate in quotation.service.ts)
+   * and is the trigger point for the `requirement_ready_for_review` notification (moved here
+   * from "first quotation uploaded" — see requirement.controller.ts). Reachable an unlimited
+   * number of times: a Director's "Send Back" decision returns the requirement to
+   * QUOTATION_COLLECTION, and it can be submitted again after revising.
    */
   async submitToDirector(id: string, actor: Actor) {
-    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
-      throw ApiError.forbidden('Only a Department User can submit a requirement to the Director');
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can submit a requirement to the Director');
     }
 
     const requirement = await Requirement.findOne({
       _id: id,
-      ...ownershipFilter(actor),
+      ...departmentWriteFilter(actor),
       status: REQUIREMENT_STATUS.QUOTATION_COLLECTION,
       isDeleted: { $ne: true },
     });

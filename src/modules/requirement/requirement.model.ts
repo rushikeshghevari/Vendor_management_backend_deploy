@@ -36,6 +36,13 @@ const requirementItemSchema = new Schema<IRequirementItem>(
 export interface IRequirement extends Document {
   requirementNumber: string;
   department: Types.ObjectId;
+  /** The requester's own department at creation time — always set, even when `department`
+   *  (above) is a different, routed-to department via targetDepartment. Stored redundantly
+   *  (rather than derived by populating createdBy.department) so requirement.service.ts's
+   *  visibility/write-scope filters can query "was this routed in from elsewhere" directly,
+   *  without an aggregation. Equal to `department` for every requirement created the normal
+   *  way (own department, no targetDepartment). */
+  requestedByDepartment: Types.ObjectId;
   createdBy: Types.ObjectId;
   title: string;
   description?: string;
@@ -64,6 +71,7 @@ const requirementSchema = new Schema<IRequirement>(
   {
     requirementNumber: { type: String, required: true, trim: true, uppercase: true, unique: true },
     department:  { type: Schema.Types.ObjectId, ref: 'Department', required: true },
+    requestedByDepartment: { type: Schema.Types.ObjectId, ref: 'Department', required: true },
     createdBy:   { type: Schema.Types.ObjectId, ref: 'User', required: true },
     title:       { type: String, required: true, trim: true },
     description: { type: String, trim: true },

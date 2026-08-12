@@ -401,13 +401,18 @@ export const quotationService = {
       department: actor.department,
       isDeleted: { $ne: true },
       status: { $in: [ 'submitted', 'quotation_collection' ] },
-    }).select('requiredDate createdBy status department');
+    }).select('requiredDate createdBy status department requestedByDepartment');
 
     if (!requirement) {
       throw ApiError.notFound('Requirement not found, or it is not open for quotation collection');
     }
 
-    if (actor.role === ROLES.DEPARTMENT_USER && requirement.createdBy.toString() !== actor.id) {
+    // A plain Department User may only add quotations to their own requirement — unless it was
+    // routed into their department from elsewhere (requestedByDepartment differs from their own
+    // department; see targetDepartment in requirement.validation.ts), in which case the whole
+    // receiving department now owns it operationally, same as HOD already could regardless.
+    const isRoutedIn = requirement.requestedByDepartment.toString() !== actor.department;
+    if (actor.role === ROLES.DEPARTMENT_USER && requirement.createdBy.toString() !== actor.id && !isRoutedIn) {
       throw ApiError.forbidden('You can only add quotations to your own requirement');
     }
 

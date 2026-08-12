@@ -209,11 +209,11 @@ router.patch(
  *   patch:
  *     tags: [Requirements]
  *     summary: >
- *       Department User explicitly hands a requirement (currently collecting quotations) over
- *       to the Director — the only way a requirement enters Director Review. Locks further
- *       quotation uploads and notifies all active Directors + Super Admins. Reachable again
- *       after a Director's "Send Back" decision returns the requirement to Quotation
- *       Collection (unlimited cycles).
+ *       The Department User or HOD currently working the requirement (its own department, or
+ *       the receiving department if routed in) hands it over to the Director — the only way a
+ *       requirement enters Director Review. Locks further quotation uploads and notifies all
+ *       active Directors + Super Admins. Reachable again after a Director's "Send Back"
+ *       decision returns the requirement to Quotation Collection (unlimited cycles).
  *     parameters:
  *       - in: path
  *         name: id
@@ -223,12 +223,15 @@ router.patch(
  *       200: { description: Requirement submitted to Director }
  *       400: { description: No quotation has been added to this requirement yet }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin with write access to this requirement }
  *       404: { description: Requirement not found, or it is not currently collecting quotations }
  */
 router.patch(
   '/:id/submit-to-director',
-  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
+  // HOD included alongside Department User — see requirementService.submitToDirector's own
+  // departmentWriteFilter for why: HOD may submit a requirement routed into their department,
+  // same as they can already add quotations to it.
+  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER, ROLES.HOD),
   validate({ params: mongoIdParamSchema() }),
   requirementController.submitToDirector,
 );

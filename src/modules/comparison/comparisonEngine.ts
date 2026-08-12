@@ -222,7 +222,10 @@ function buildStatistics(snapshots: IComparisonQuotationSnapshot[], budget: numb
     highestPrice,
     averagePrice,
     costDifference: highestPrice - lowestPrice,
-    budgetVarianceAmount: referencePrice - budget,
+    // Guarded the same way as the percent below — an unset (0) budget means "no budget
+    // constraint recorded yet" (see requirement.service.ts's auto-derived default), not
+    // "everything exceeds a $0 budget", so both variance fields stay undefined together.
+    budgetVarianceAmount: budget > 0 ? referencePrice - budget : undefined,
     budgetVariancePercent: budget > 0 ? ((referencePrice - budget) / budget) * 100 : undefined,
   };
 }
