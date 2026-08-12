@@ -10,6 +10,7 @@
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "seed": "tsx src/scripts/seed.ts",
     "reset:test-data": "tsx src/scripts/resetTestData.ts",
+    "backfill:requested-by-department": "tsx src/scripts/backfillRequestedByDepartment.ts",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },
