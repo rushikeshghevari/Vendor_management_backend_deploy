@@ -23,7 +23,7 @@ export const requirementItemSchema = z.object({
 // (same idiom as createQuotationSchema). `targetDepartment` is the one deliberate escape
 // hatch: a Department User may route the requirement to a *different* department (e.g. an
 // IT user requesting furniture routes to Admin) — requirement.service.ts validates it against
-// the isRequirementTarget-flagged department list before trusting it.
+// the active department list before trusting it.
 //
 // `title`, `budget`, and `requiredDate` are all optional: the requester shouldn't have to set
 // a budget upfront (that's decided later, against actual quotations) or write a title (derived

@@ -119,15 +119,13 @@ export const requirementService = {
     }
 
     // Defaults to the requester's own department; `targetDepartment` lets them route it to a
-    // different one instead (e.g. an IT user requesting furniture routes to Admin) — only
-    // departments Super Admin has opted in via isRequirementTarget are valid targets, so this
-    // can never be used to silently misfile a requirement into an arbitrary department.
+    // different one instead (e.g. an IT user requesting furniture routes to Admin) — any active
+    // department is a valid target.
     let department = actor.department;
     if (input.targetDepartment) {
       const targetDept = await Department.findOne({
         _id: input.targetDepartment,
         isActive: true,
-        isRequirementTarget: true,
       }).select('_id');
       if (!targetDept) throw ApiError.badRequest('Selected department is not a valid requirement target');
       department = targetDept.id;

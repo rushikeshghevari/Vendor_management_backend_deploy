@@ -137,7 +137,6 @@ export const departmentService = {
     const pagination = parsePagination(query);
     const filter: Record<string, unknown> = {};
     if (query.isActive !== undefined) filter.isActive = query.isActive === 'true';
-    if (query.isRequirementTarget !== undefined) filter.isRequirementTarget = query.isRequirementTarget === 'true';
 
     const [items, total] = await Promise.all([
       Department.find(filter)
