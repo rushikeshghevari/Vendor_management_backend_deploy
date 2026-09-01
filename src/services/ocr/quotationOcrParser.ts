@@ -71,13 +71,26 @@ function extractItems(text: string): IQuotationOcrItem[] {
   return items;
 }
 
+/** Most quotation/invoice templates put the issuing company's name on the very first line
+ *  (letterhead), with no explicit "Vendor:"/"From:" label at all — used as a fallback when
+ *  the labelled patterns above find nothing. Rejected if it's implausibly short/long or is
+ *  itself just the document's heading (e.g. "QUOTATION"), rather than a real name. */
+const GENERIC_FIRST_LINE_WORDS = ['quotation', 'invoice', 'proforma', 'estimate', 'bill', 'receipt'];
+
+function extractFirstLineAsVendorName(text: string): string | undefined {
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (!firstLine || firstLine.length < 3 || firstLine.length > 80) return undefined;
+  if (GENERIC_FIRST_LINE_WORDS.some((word) => firstLine.toLowerCase().includes(word))) return undefined;
+  return firstLine;
+}
+
 export function parseQuotationText(rawText: string): IQuotationOcrStructuredData {
   const text = rawText.replace(/[ \t]+/g, ' ');
 
   const vendorName = extractWithPattern(text, [
     /(?:from|supplier|vendor|seller|quoted\s*by)[:\s]+([A-Za-z0-9\s&.,Pvt.Ltd]+?)(?:\n|,|GST)/i,
     /company\s*name[:\s]+([A-Za-z0-9\s&.,]+?)(?:\n|,)/i,
-  ]);
+  ]) ?? extractFirstLineAsVendorName(rawText);
 
   const quotationNumber = extractWithPattern(text, [
     /quotation\s*(?:no|number|#)[:\s]+([A-Z0-9\-\/]+)/i,
