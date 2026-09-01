@@ -6,7 +6,7 @@ import { env } from '@/config/env';
  * Latest stable Gemini model. Update here when Google releases a newer stable version.
  * All services import this constant so a model upgrade is a one-line change.
  */
-export const GEMINI_MODEL = 'gemini-2.0-flash';
+export const GEMINI_MODEL = 'gemini-3.6-flash';
 
 /** Semver prompt version — bump when the verification prompt changes materially. */
 export const GEMINI_PROMPT_VERSION = '2.0.0';
