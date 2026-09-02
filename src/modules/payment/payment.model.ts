@@ -22,7 +22,11 @@ export interface IPayment extends Document {
   paymentCode: string;
   bill: Types.ObjectId;
   quotation: Types.ObjectId;
-  vendor: Types.ObjectId;
+  // Optional only for a `reimbursement`-mode recurring expense Bill, which has no vendor at
+  // all — see `reimbursedTo` below. Mirrors the same optionality on Bill.vendor.
+  vendor?: Types.ObjectId;
+  recurringExpense?: Types.ObjectId;
+  reimbursedTo?: Types.ObjectId;
   department: Types.ObjectId;
   amount: number;
   gst: number;
@@ -66,7 +70,9 @@ const paymentSchema = new Schema<IPayment>(
     // a Failed payment is always retried in place, never as a second document.
     bill: { type: Schema.Types.ObjectId, ref: 'Bill', required: true, unique: true },
     quotation: { type: Schema.Types.ObjectId, ref: 'Quotation', required: true },
-    vendor: { type: Schema.Types.ObjectId, ref: 'Vendor', required: true },
+    vendor: { type: Schema.Types.ObjectId, ref: 'Vendor' },
+    recurringExpense: { type: Schema.Types.ObjectId, ref: 'RecurringExpense' },
+    reimbursedTo: { type: Schema.Types.ObjectId, ref: 'User' },
     department: { type: Schema.Types.ObjectId, ref: 'Department', required: true },
     amount: { type: Number, required: true, min: 0 },
     gst: { type: Number, required: true, min: 0 },

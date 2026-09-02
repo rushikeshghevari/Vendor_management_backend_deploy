@@ -19,6 +19,8 @@ import { notificationService } from '@/modules/notification/notification.service
 import { PurchaseOrder } from '@/modules/purchaseOrder/purchaseOrder.model';
 import { Quotation } from '@/modules/quotation/quotation.model';
 import { quotationService } from '@/modules/quotation/quotation.service';
+import { RECURRING_MODE } from '@/constants/status';
+import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
 import { User } from '@/modules/user/user.model';
 import { runAiVerification } from '@/services/ai/aiVerification.service';
 import type { Actor } from '@/types/actor';
@@ -393,6 +395,119 @@ async function runAiPipelineForBill(bill: IBill, actor: Actor): Promise<void> {
   }
 }
 
+/**
+ * Runs in place of `runAiPipelineForBill()` for a Bill created against a RecurringExpense
+ * (bill.recurringExpense set) — these have no Purchase Order/Goods Receipt to 3-way-match
+ * against, so there is nothing for Gemini or Accounts to compare. Instead, this compares the
+ * cycle's `invoiceAmount` against the series' `baselineAmount`:
+ *  - within `thresholdPercent` → skip Director Financial Approval *and* Accounts verification
+ *    entirely, straight to VERIFIED (immediately payable by Payment Department).
+ *  - over threshold → leave the bill at AI_VERIFIED so it surfaces on the Director's existing
+ *    Financial Approvals screen; `decideFinancialApproval()`'s recurring-aware branch (below)
+ *    carries an `approved` decision the rest of the way to VERIFIED once made.
+ */
+async function processRecurringBillPipeline(bill: IBill, actor: Actor): Promise<void> {
+  const billId = String(bill._id);
+  const now = new Date();
+
+  try {
+    const series = bill.recurringExpense ? await RecurringExpense.findById(bill.recurringExpense) : null;
+    if (!series) {
+      console.error(`[Recurring Bill] No RecurringExpense found for bill ${bill.billCode}`);
+      await Bill.findByIdAndUpdate(billId, {
+        status: BILL_STATUS.AI_FAILED,
+        aiFailureReason: 'Linked recurring expense series not found',
+        $push: {
+          history: {
+            event: 'ai_failed', status: BILL_STATUS.AI_FAILED,
+            remarks: 'Linked recurring expense series not found',
+            actorId: actor.id, actorRole: actor.role, at: now,
+          },
+        },
+      });
+      return;
+    }
+
+    const increasePercent = series.baselineAmount > 0
+      ? ((bill.invoiceAmount - series.baselineAmount) / series.baselineAmount) * 100
+      : 0;
+    const withinThreshold = increasePercent <= series.thresholdPercent;
+
+    if (withinThreshold) {
+      await Bill.findByIdAndUpdate(billId, {
+        status: BILL_STATUS.VERIFIED,
+        verifiedAt: now,
+        $push: {
+          history: {
+            event: 'accounts_decision', status: BILL_STATUS.VERIFIED,
+            remarks: `Recurring expense (${series.title}) — ${increasePercent.toFixed(1)}% vs. baseline, within the ${series.thresholdPercent}% threshold. Auto-verified straight to Payment.`,
+            actorId: actor.id, actorRole: actor.role, at: now,
+          },
+        },
+      });
+
+      const paymentUsers = await notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT);
+      if (paymentUsers.length > 0) {
+        await notificationService.notifyUsers(paymentUsers, {
+          title: 'Recurring Bill Ready for Payment',
+          message: `Bill ${bill.billCode} (${series.title}) is within the approved threshold and ready for payment.`,
+          module: 'bill', relatedRecord: billId, notificationType: 'bill_financial_approved', sender: actor.id,
+        });
+      }
+      await notificationService.notifyUser(
+        { id: bill.createdBy.toString(), role: ROLES.DEPARTMENT_USER },
+        {
+          title: 'Recurring Bill Verified',
+          message: `Bill ${bill.billCode} (${series.title}) was within the approved threshold and sent straight to Payment.`,
+          module: 'bill', relatedRecord: billId, notificationType: 'bill_ai_verified', sender: actor.id,
+        },
+      );
+    } else {
+      await Bill.findByIdAndUpdate(billId, {
+        status: BILL_STATUS.AI_VERIFIED,
+        aiVerifiedAt: now,
+        $push: {
+          history: {
+            event: 'ai_verified', status: BILL_STATUS.AI_VERIFIED,
+            remarks: `Recurring expense (${series.title}) — ${increasePercent.toFixed(1)}% over baseline (threshold ${series.thresholdPercent}%). Needs Director approval before payment.`,
+            actorId: actor.id, actorRole: actor.role, at: now,
+          },
+        },
+      });
+
+      const directors = await notificationService.findActiveUsersByRole(ROLES.DIRECTOR);
+      if (directors.length > 0) {
+        await notificationService.notifyUsers(directors, {
+          title: 'Recurring Bill Needs Approval',
+          message: `Bill ${bill.billCode} (${series.title}) is ${increasePercent.toFixed(1)}% over its approved baseline — please review.`,
+          module: 'bill', relatedRecord: billId, notificationType: 'ai_high_risk_alert', sender: actor.id,
+        });
+      }
+      await notificationService.notifyUser(
+        { id: bill.createdBy.toString(), role: ROLES.DEPARTMENT_USER },
+        {
+          title: 'Recurring Bill Awaiting Director Approval',
+          message: `Bill ${bill.billCode} (${series.title}) is ${increasePercent.toFixed(1)}% over the approved baseline, so a Director must approve it before it can be paid.`,
+          module: 'bill', relatedRecord: billId, notificationType: 'bill_ai_verified', sender: actor.id,
+        },
+      );
+    }
+  } catch (err) {
+    console.error(`[Recurring Bill] Pipeline failed for bill ${bill.billCode}:`, err);
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    await Bill.findByIdAndUpdate(billId, {
+      status: BILL_STATUS.AI_FAILED,
+      aiFailureReason: message,
+      $push: {
+        history: {
+          event: 'ai_failed', status: BILL_STATUS.AI_FAILED, remarks: message,
+          actorId: actor.id, actorRole: actor.role, at: new Date(),
+        },
+      },
+    }).catch(() => null);
+  }
+}
+
 // ── billService ────────────────────────────────────────────────────────────────
 
 export const billService = {
@@ -522,6 +637,84 @@ export const billService = {
     return bill;
   },
 
+  /**
+   * Creates one cycle's Bill for a RecurringExpense (see recurringExpense.service.ts's
+   * generateCycle(), the only caller). Deliberately bypasses every gate in `create()` above
+   * that assumes a Purchase Order/Goods Receipt exists — a recurring expense (subscription,
+   * hosting, reimbursement) has neither, so there is nothing to 3-way-match. The resulting
+   * Bill still goes through the normal `submit()`/upload-invoice flow unchanged; only its
+   * background pipeline differs (see `processRecurringBillPipeline` vs. `runAiPipelineForBill`).
+   */
+  async createForRecurringExpense(input: {
+    recurringExpenseId: string;
+    quotationId: string;
+    invoiceNumber: string;
+    invoiceDate: Date;
+    invoiceAmount: number;
+    taxableAmount?: number;
+    gstAmount?: number;
+    paymentTerms?: string;
+    dueDate?: Date;
+    remarks?: string;
+  }, actor: Actor): Promise<IBill> {
+    const series = await RecurringExpense.findById(input.recurringExpenseId);
+    if (!series || !series.isActive) throw ApiError.notFound('Recurring expense not found, or it is inactive');
+
+    const quotation = await Quotation.findById(input.quotationId);
+    if (!quotation || quotation.isDeleted) throw ApiError.badRequest('Quotation not found');
+
+    const existingBill = await Bill.findOne({ quotation: quotation.id, isDeleted: { $ne: true } });
+    if (existingBill) throw ApiError.conflict('A bill already exists for this cycle');
+
+    const vendor = series.mode === RECURRING_MODE.VENDOR_BILL ? series.vendor : undefined;
+    const reimbursedTo = series.mode === RECURRING_MODE.REIMBURSEMENT ? series.reimbursedTo : undefined;
+
+    // Same invoice-number-reuse guard as create() — scoped to the vendor when there is one
+    // (vendor_bill mode), or to this series when there isn't (reimbursement mode has no
+    // vendor to scope by; see the matching partial-index change in bill.model.ts).
+    const duplicateInvoice = vendor
+      ? await Bill.findOne({ vendor, invoiceNumber: input.invoiceNumber, isDeleted: { $ne: true } })
+      : await Bill.findOne({ recurringExpense: series.id, invoiceNumber: input.invoiceNumber, isDeleted: { $ne: true } });
+    if (duplicateInvoice) {
+      throw ApiError.conflict(`Invoice/reference "${input.invoiceNumber}" has already been billed for this recurring expense (Bill ${duplicateInvoice.billCode})`);
+    }
+
+    const billCode = await generateBillCode(String(series.department));
+    const uploader = await User.findById(actor.id).select('name role').lean();
+
+    const bill = await Bill.create({
+      quotation: quotation._id,
+      vendor,
+      reimbursedTo,
+      recurringExpense: series._id,
+      department: series.department,
+      createdBy: actor.id,
+      uploadedByName: uploader?.name ?? 'Unknown',
+      uploadedByRole: uploader?.role ?? actor.role,
+      invoiceNumber: input.invoiceNumber,
+      invoiceDate: input.invoiceDate,
+      invoiceAmount: input.invoiceAmount,
+      taxableAmount: input.taxableAmount ?? input.invoiceAmount,
+      gstAmount: input.gstAmount ?? 0,
+      paymentTerms: input.paymentTerms ?? 'N/A',
+      dueDate: input.dueDate ?? input.invoiceDate,
+      remarks: input.remarks,
+      status: BILL_STATUS.DRAFT,
+      history: [{
+        event: 'created',
+        status: BILL_STATUS.DRAFT,
+        actorId: actor.id,
+        actorName: uploader?.name ?? 'Unknown',
+        actorRole: actor.role,
+        at: new Date(),
+      }],
+    });
+
+    await quotationService.transitionStatus(quotation.id, [QUOTATION_STATUS.APPROVED], QUOTATION_STATUS.BILLED);
+
+    return bill;
+  },
+
   async list(query: Record<string, unknown>, actor: Actor) {
     const pagination = parsePagination(query);
     const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
@@ -545,6 +738,8 @@ export const billService = {
     const [items, total] = await Promise.all([
       Bill.find(filter)
         .populate('vendor', 'name code category status')
+        .populate('reimbursedTo', 'name email')
+        .populate('recurringExpense', 'title mode frequency thresholdPercent baselineAmount reimbursementBankDetails')
         .populate('department', 'name code')
         .populate('quotation', 'quotationCode status amount gst')
         .populate('purchaseOrder', 'poNumber grandTotal status')
@@ -568,6 +763,8 @@ export const billService = {
 
     const bill = await Bill.findOne(filter)
       .populate('vendor')
+      .populate('reimbursedTo', 'name email')
+      .populate('recurringExpense', 'title mode frequency thresholdPercent baselineAmount reimbursementBankDetails')
       .populate('department', 'name code')
       .populate('quotation')
       .populate('purchaseOrder', 'poNumber grandTotal status')
@@ -739,10 +936,17 @@ export const billService = {
       },
     ).catch(() => null);
 
-    // Fire AI pipeline in background — does NOT block this response
-    runAiPipelineForBill(bill, actor).catch((err) =>
-      console.error('[Bill Submit] Background AI pipeline error:', err),
-    );
+    // Fire the right pipeline in background — does NOT block this response. A recurring-cycle
+    // bill has no PO/GRN to 3-way-match, so it runs the threshold check instead of AI.
+    if (bill.recurringExpense) {
+      processRecurringBillPipeline(bill, actor).catch((err) =>
+        console.error('[Bill Submit] Background recurring pipeline error:', err),
+      );
+    } else {
+      runAiPipelineForBill(bill, actor).catch((err) =>
+        console.error('[Bill Submit] Background AI pipeline error:', err),
+      );
+    }
 
     return bill;
   },
@@ -777,9 +981,15 @@ export const billService = {
       });
       await correctionBill.save();
 
-      runAiPipelineForBill(correctionBill, actor).catch((err) =>
-        console.error('[Bill Resubmit] Background AI pipeline error:', err),
-      );
+      if (correctionBill.recurringExpense) {
+        processRecurringBillPipeline(correctionBill, actor).catch((err) =>
+          console.error('[Bill Resubmit] Background recurring pipeline error:', err),
+        );
+      } else {
+        runAiPipelineForBill(correctionBill, actor).catch((err) =>
+          console.error('[Bill Resubmit] Background AI pipeline error:', err),
+        );
+      }
 
       return correctionBill;
     }
@@ -904,6 +1114,25 @@ export const billService = {
 
     await bill.save();
 
+    // A recurring-expense bill has no PO/GRN for Accounts to 3-way-match against — once every
+    // Director has approved it, skip Accounts entirely and go straight to Verified (mirrors the
+    // "within threshold" auto-skip in processRecurringBillPipeline, for the same reason).
+    if (newStatus === BILL_STATUS.DIRECTOR_APPROVED && bill.recurringExpense) {
+      newStatus = BILL_STATUS.VERIFIED;
+      bill.status = BILL_STATUS.VERIFIED;
+      bill.verifiedAt = now;
+      bill.history.push({
+        event: 'accounts_decision',
+        status: BILL_STATUS.VERIFIED,
+        remarks: 'Recurring expense — Director-approved, auto-verified straight to Payment (no PO/GRN to match).',
+        actorId: actor.id as unknown as IBill['createdBy'],
+        actorName,
+        actorRole: actor.role,
+        at: now,
+      });
+      await bill.save();
+    }
+
     const ownerId = bill.createdBy.toString();
     const relatedRecord = String(bill._id);
 
@@ -960,6 +1189,30 @@ export const billService = {
           {
             title: 'Review Pending',
             message: `Director ${actorName} completed the review on bill ${bill.billCode}. Your review is still pending.`,
+            module: 'bill',
+            relatedRecord,
+            notificationType: 'bill_financial_approved',
+            sender: actor.id,
+          },
+        );
+      } else if (bill.recurringExpense) {
+        // Fully Approved, recurring bill — already fast-forwarded to Verified above, so this
+        // goes straight to Payment Department, not Accounts.
+        const paymentUsers = await notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT);
+        await notificationService.notifyUsers(paymentUsers, {
+          title: 'Recurring Bill Ready for Payment',
+          message: `Bill ${bill.billCode} has been approved by the Directors and is ready for payment.`,
+          module: 'bill',
+          relatedRecord,
+          notificationType: 'bill_financial_approved',
+          sender: actor.id,
+        });
+
+        await notificationService.notifyUser(
+          { id: ownerId, role: ROLES.DEPARTMENT_USER },
+          {
+            title: 'Bill Financially Approved',
+            message: `Your bill ${bill.billCode} has been approved by the Directors and sent straight to Payment.`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_financial_approved',

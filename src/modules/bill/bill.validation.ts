@@ -13,6 +13,7 @@ export const createBillSchema = z.object({
   taxableAmount: z.coerce.number().min(0, 'Taxable amount cannot be negative'),
   gstAmount: z.coerce.number().min(0, 'GST amount cannot be negative'),
   paymentTerms: z.string().trim().min(1, 'Payment terms are required'),
+  creditPeriod: z.coerce.number().min(0).optional(),
   dueDate: z.coerce.date(),
   remarks: z.string().trim().max(1000).optional(),
 });

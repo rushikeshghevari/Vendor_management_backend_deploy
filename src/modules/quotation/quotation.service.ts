@@ -325,7 +325,7 @@ async function notifyOfDecision(
  * same code — the previous count-based approach had a genuine (if rare) race window between
  * counting and inserting.
  */
-async function generateQuotationCode(departmentId: string): Promise<string> {
+export async function generateQuotationCode(departmentId: string): Promise<string> {
   const department = await Department.findById(departmentId).select('code');
   if (!department) throw ApiError.badRequest('Department not found for this quotation');
 

@@ -152,6 +152,24 @@ export const GRN_OVERALL_CONDITION = {
 } as const;
 export type GrnOverallCondition = (typeof GRN_OVERALL_CONDITION)[keyof typeof GRN_OVERALL_CONDITION];
 
+// Recurring Expense — department-level recurring costs (subscriptions, server hosting,
+// reimbursements) approved once by a Director, then auto-fast-tracked each cycle unless the
+// amount rises past the series' threshold. See recurringExpense.model.ts.
+export const RECURRING_FREQUENCY = {
+  MONTHLY: 'monthly',
+  HALF_YEARLY: 'half_yearly',
+  YEARLY: 'yearly',
+} as const;
+export type RecurringFrequency = (typeof RECURRING_FREQUENCY)[keyof typeof RECURRING_FREQUENCY];
+
+export const RECURRING_MODE = {
+  // Company pays the vendor directly each cycle (server hosting, software licenses, AMC).
+  VENDOR_BILL: 'vendor_bill',
+  // An employee pays out-of-pocket each cycle and is paid back by the company.
+  REIMBURSEMENT: 'reimbursement',
+} as const;
+export type RecurringMode = (typeof RECURRING_MODE)[keyof typeof RECURRING_MODE];
+
 /** Quotation attachment OCR pipeline — see `src/services/ocr/quotationOcr.service.ts`. */
 export const OCR_STATUS = {
   NOT_STARTED: 'not_started',

@@ -49,6 +49,8 @@ export const ACTIVITY_ACTIONS = [
   'goods_receipt_created',
   'vendor_registration_link_generated',
   'vendor_registration_link_verified',
+  'recurring_expense_created',
+  'recurring_expense_cycle_generated',
 ] as const;
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
 

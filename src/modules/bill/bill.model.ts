@@ -64,9 +64,22 @@ export interface IBill extends Document {
   // whenever `requirement` above is set), denormalized here for the same reason.
   goodsReceipt?: Types.ObjectId;
   grnNumber?: string;
-  vendor: Types.ObjectId;
+  // Optional only for a `reimbursement`-mode recurring expense (see `recurringExpense` below),
+  // where there's no vendor at all — the payee is `reimbursedTo` instead. Every other Bill
+  // (including `vendor_bill`-mode recurring ones) always has this set; billService.create()
+  // and .createForRecurringExpense() are the only two places that construct a Bill, and both
+  // enforce that "vendor or reimbursedTo, never neither" at the application level.
+  vendor?: Types.ObjectId;
   department: Types.ObjectId;
   createdBy: Types.ObjectId;
+  // Set only when this Bill is one cycle of a RecurringExpense (see recurringExpense.model.ts)
+  // — created via billService.createForRecurringExpense() instead of the normal .create(),
+  // skipping the PO/Goods-Receipt gate and routed through processRecurringBillPipeline()
+  // instead of the AI 3-way pipeline. Never set for an ordinary one-off Bill.
+  recurringExpense?: Types.ObjectId;
+  // Denormalized from RecurringExpense.reimbursedTo — who actually gets paid, for a
+  // `reimbursement`-mode recurring Bill. Payment Department reads this instead of `vendor`.
+  reimbursedTo?: Types.ObjectId;
   // Denormalized snapshot of the uploader — mirrors the vendorName/departmentName pattern
   // already used on PurchaseOrder, so list views never need an extra populate/lookup.
   uploadedByName: string;
@@ -77,6 +90,9 @@ export interface IBill extends Document {
   taxableAmount: number;
   gstAmount: number;
   paymentTerms: string;
+  // Days of credit on this specific invoice — usually carried over from the Quotation's
+  // creditPeriod, but editable here since the actual invoice can state different terms.
+  creditPeriod?: number;
   dueDate: Date;
   invoiceFiles: IBillFileVersion[];
   supportingDocuments: IBillFileVersion[];
@@ -171,9 +187,11 @@ const billSchema = new Schema<IBill>(
     requirementNumber: { type: String, trim: true, uppercase: true },
     goodsReceipt:      { type: Schema.Types.ObjectId, ref: 'GoodsReceipt' },
     grnNumber:         { type: String, trim: true, uppercase: true },
-    vendor: { type: Schema.Types.ObjectId, ref: 'Vendor', required: true },
+    vendor: { type: Schema.Types.ObjectId, ref: 'Vendor' },
     department: { type: Schema.Types.ObjectId, ref: 'Department', required: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    recurringExpense: { type: Schema.Types.ObjectId, ref: 'RecurringExpense' },
+    reimbursedTo: { type: Schema.Types.ObjectId, ref: 'User' },
     uploadedByName: { type: String, required: true, trim: true },
     uploadedByRole: { type: String, required: true, trim: true },
     invoiceNumber: { type: String, required: true, trim: true },
@@ -182,6 +200,7 @@ const billSchema = new Schema<IBill>(
     taxableAmount: { type: Number, required: true, min: 0 },
     gstAmount: { type: Number, required: true, min: 0 },
     paymentTerms: { type: String, required: true, trim: true },
+    creditPeriod: { type: Number, min: 0 },
     dueDate: { type: Date, required: true },
     invoiceFiles: { type: [fileVersionSchema], default: [] },
     supportingDocuments: { type: [fileVersionSchema], default: [] },
@@ -235,9 +254,14 @@ billSchema.index({ requirement: 1 });
 // DB-level backstop for the same-invoice-twice-for-one-vendor check in bill.service.ts —
 // closes the race window between the application check and the insert (partial so a
 // soft-deleted bill never blocks reusing its invoice number).
+// `vendor: { $exists: true }` added to the filter (on top of the existing isDeleted: false) —
+// `vendor` is optional now (reimbursement-mode recurring bills have none), and a partial index
+// can't enforce uniqueness across documents where the indexed field is absent anyway; this
+// keeps the guarantee scoped to bills that actually have a vendor, same as before this changed.
 billSchema.index(
   { vendor: 1, invoiceNumber: 1 },
-  { unique: true, partialFilterExpression: { isDeleted: false } },
+  { unique: true, partialFilterExpression: { isDeleted: false, vendor: { $exists: true } } },
 );
+billSchema.index({ recurringExpense: 1 });
 
 export const Bill = model<IBill>('Bill', billSchema);

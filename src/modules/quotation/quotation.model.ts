@@ -101,6 +101,10 @@ export interface IQuotation extends Document {
   currency: QuotationCurrency;
   paymentTerms: string;
   deliveryTerms: string;
+  // Number of days of credit the vendor is extending on this quotation (0 = cash/no credit).
+  // Compulsory here since it directly affects payment scheduling; carried onto the Bill too
+  // (see Bill.creditPeriod), where it's editable in case the actual invoice differs.
+  creditPeriod: number;
   priority: QuotationPriority;
   description?: string;
   pdfFiles: IQuotationPdfVersion[];
@@ -224,6 +228,7 @@ const quotationSchema = new Schema<IQuotation>(
     currency: { type: String, enum: QUOTATION_CURRENCIES, default: 'INR' },
     paymentTerms: { type: String, required: true, trim: true },
     deliveryTerms: { type: String, required: true, trim: true },
+    creditPeriod: { type: Number, required: true, min: 0 },
     priority: { type: String, enum: QUOTATION_PRIORITIES, default: 'medium' },
     description: { type: String, trim: true },
     // Never overwritten — every upload appends a new version; the last entry is the active one.

@@ -36,6 +36,12 @@ export const env = {
   },
   // Optional — if not set, AI verification falls back to Rule Engine only.
   geminiApiKey: process.env.GEMINI_API_KEY,
+
+  // Optional — gates the /external/* read-only API used by other projects (e.g. a Payment
+  // department calendar-reminder integration). Left optional (not `required()`) so a
+  // deployment that hasn't set it yet still boots; the apiKey middleware fails closed
+  // (rejects every request) when this is unset, rather than falling back to an insecure default.
+  externalApiKey: process.env.EXTERNAL_API_KEY,
 } as const;
 
 // Print a clear startup notice so the operator knows the AI mode at boot time.

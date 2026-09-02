@@ -78,6 +78,8 @@ export const NOTIFICATION_TYPES = [
   'broadcast',
   'escalation',
   'reminder',
+  // Recurring Expense
+  'recurring_expense_due',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

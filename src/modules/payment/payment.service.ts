@@ -90,6 +90,8 @@ export const paymentService = {
       bill: bill.id,
       quotation: bill.quotation,
       vendor: bill.vendor,
+      recurringExpense: bill.recurringExpense,
+      reimbursedTo: bill.reimbursedTo,
       department: bill.department,
       amount: bill.invoiceAmount,
       gst: bill.gstAmount,
@@ -409,6 +411,8 @@ export const paymentService = {
     const [items, total] = await Promise.all([
       Payment.find(filter)
         .populate('vendor', 'name')
+        .populate('reimbursedTo', 'name email')
+        .populate('recurringExpense', 'title mode reimbursementBankDetails')
         .populate('department', 'name')
         .populate('bill', 'billCode status')
         .populate('quotation', 'quotationCode')
@@ -427,6 +431,8 @@ export const paymentService = {
 
     const payment = await Payment.findOne(filter)
       .populate('vendor', 'name')
+      .populate('reimbursedTo', 'name email')
+      .populate('recurringExpense', 'title mode thresholdPercent baselineAmount reimbursementBankDetails')
       .populate('department', 'name')
       .populate('bill', 'billCode status verifiedBy verifiedAt requirementNumber grnNumber')
       .populate('quotation', 'quotationCode');
@@ -453,6 +459,7 @@ export const paymentService = {
   async getByQuotation(quotationId: string) {
     const payment = await Payment.findOne({ quotation: quotationId })
       .populate('vendor', 'name')
+      .populate('reimbursedTo', 'name')
       .populate('bill', 'billCode status');
     if (!payment) throw ApiError.notFound('No payment exists for this quotation yet');
     return payment;

@@ -229,6 +229,8 @@ export const directorService = {
   async getBillReview(billId: string, _actor: Actor) {
     const bill = await Bill.findOne({ _id: billId, isDeleted: { $ne: true } })
       .populate('vendor')
+      .populate('reimbursedTo', 'name email')
+      .populate('recurringExpense', 'title mode frequency thresholdPercent baselineAmount reimbursementBankDetails')
       .populate('department', 'name code')
       .populate('createdBy', 'name email')
       .populate('directorFinancialBy', 'name email')
@@ -337,6 +339,9 @@ export const directorService = {
         directorFinancialAt: bill.directorFinancialAt ?? null,
         directorFinancialRemarks: bill.directorFinancialRemarks ?? null,
         directorApprovals: roster,
+        recurringExpense: bill.recurringExpense as unknown as
+          { _id: unknown; title: string; mode: string; thresholdPercent: number; baselineAmount: number } | null,
+        reimbursedTo: bill.reimbursedTo ?? null,
       },
       quotation: quotation ? {
         id: String(quotation._id),

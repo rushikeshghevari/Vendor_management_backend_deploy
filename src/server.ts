@@ -11,6 +11,7 @@ import { connectDB, disconnectDB } from '@/config/db';
 import { env } from '@/config/env';
 import { startEscalationScheduler, stopEscalationScheduler } from '@/services/escalation/escalation.service';
 import { startQueueProcessor, stopQueueProcessor } from '@/services/push/notificationQueue.service';
+import { startRecurringExpenseReminderScheduler, stopRecurringExpenseReminderScheduler } from '@/services/recurringExpense/recurringExpenseReminder.service';
 import { startReminderScheduler, stopReminderScheduler } from '@/services/reminder/reminder.service';
 import { logger } from '@/utils/logger';
 
@@ -37,12 +38,14 @@ async function main(): Promise<void> {
   startEscalationScheduler();
   startQueueProcessor();
   startReminderScheduler();
+  startRecurringExpenseReminderScheduler();
 
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
     stopEscalationScheduler();
     stopQueueProcessor();
     stopReminderScheduler();
+    stopRecurringExpenseReminderScheduler();
     server.close(async () => {
       await disconnectDB();
       process.exit(0);
