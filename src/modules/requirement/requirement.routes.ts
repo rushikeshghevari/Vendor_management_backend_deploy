@@ -11,6 +11,7 @@ import { createRequirementQuotationSchema, quotationListQuerySchema } from '@/mo
 import {
   createRequirementSchema,
   requirementListQuerySchema,
+  setPreparedQuotationSchema,
   updateRequirementSchema,
 } from '@/modules/requirement/requirement.validation';
 import { mongoIdParamSchema } from '@/utils/commonValidation';
@@ -327,6 +328,48 @@ router.post(
     quotationId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id'),
   }) }),
   requirementController.retryOcr,
+);
+
+/**
+ * @openapi
+ * /requirements/{id}/quotations/{quotationId}/prepared:
+ *   patch:
+ *     tags: [Requirements]
+ *     summary: >
+ *       Mark (or unmark) a quotation as the Department User/HOD's own recommended pick among
+ *       the ones collected so far — purely informational, shown to the Director alongside each
+ *       quotation but never restricting which one they can actually approve.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: quotationId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [prepared], properties: { prepared: { type: boolean } } }
+ *     responses:
+ *       200: { description: Requirement updated }
+ *       401: { description: Missing or invalid access token }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin with write access to this requirement }
+ *       404: { description: Requirement or quotation not found }
+ */
+router.patch(
+  '/:id/quotations/:quotationId/prepared',
+  authorize(ROLES.DEPARTMENT_USER, ROLES.HOD, ROLES.SUPER_ADMIN),
+  validate({
+    params: z.object({
+      id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id'),
+      quotationId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id'),
+    }),
+    body: setPreparedQuotationSchema,
+  }),
+  requirementController.setPreparedQuotation,
 );
 
 export default router;

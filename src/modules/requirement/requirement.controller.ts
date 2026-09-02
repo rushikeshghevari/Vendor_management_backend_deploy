@@ -274,4 +274,14 @@ export const requirementController = {
     const quotation = await quotationOcrService.retry(quotationId, req.user!);
     sendSuccess(res, quotation, 'OCR retry started');
   }),
+
+  setPreparedQuotation: catchAsync(async (req: Request, res: Response) => {
+    const requirement = await requirementService.setPreparedQuotation(
+      req.params.id as string,
+      req.params.quotationId as string,
+      req.body,
+      req.user!,
+    );
+    sendSuccess(res, requirement, req.body.prepared ? 'Quotation marked as prepared' : 'Quotation unmarked as prepared');
+  }),
 };

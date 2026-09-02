@@ -5,7 +5,7 @@ import { REQUIREMENT_STATUS } from '@/constants/status';
 import { Department } from '@/modules/department/department.model';
 import { Quotation } from '@/modules/quotation/quotation.model';
 import { Requirement } from '@/modules/requirement/requirement.model';
-import type { CreateRequirementInput, UpdateRequirementInput } from '@/modules/requirement/requirement.validation';
+import type { CreateRequirementInput, SetPreparedQuotationInput, UpdateRequirementInput } from '@/modules/requirement/requirement.validation';
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
 import { escapeRegex } from '@/utils/escapeRegex';
@@ -312,6 +312,37 @@ export const requirementService = {
       { path: 'submittedBy', select: 'name' },
     ]);
 
+    return requirement;
+  },
+
+  /**
+   * The Department User/HOD's own pick among the quotations they've collected so far — purely
+   * informational, shown to the Director as a signal alongside each quotation (never restricts
+   * which one the Director can actually approve). Uses the same write-scope as
+   * `submitToDirector` (own department, or the receiving department if routed in) since this is
+   * available throughout quotation collection, not just at submit time.
+   */
+  async setPreparedQuotation(id: string, quotationId: string, input: SetPreparedQuotationInput, actor: Actor) {
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can mark a quotation as prepared');
+    }
+
+    const requirement = await Requirement.findOne({
+      _id: id,
+      ...departmentWriteFilter(actor),
+      isDeleted: { $ne: true },
+    });
+    if (!requirement) throw ApiError.notFound('Requirement not found');
+
+    const quotation = await Quotation.exists({ _id: quotationId, requirement: id, isDeleted: { $ne: true } });
+    if (!quotation) throw ApiError.notFound('Quotation not found on this requirement');
+
+    if (input.prepared) {
+      requirement.preparedQuotation = new Types.ObjectId(quotationId);
+    } else if (requirement.preparedQuotation?.toString() === quotationId) {
+      requirement.preparedQuotation = undefined;
+    }
+    await requirement.save();
     return requirement;
   },
 

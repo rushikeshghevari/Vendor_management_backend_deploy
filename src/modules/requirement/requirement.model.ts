@@ -63,6 +63,10 @@ export interface IRequirement extends Document {
    *  single lookup every later stage (PO generation) should use, since `createdFromRequirement`
    *  alone can't resolve a reused vendor back to a Requirement it wasn't created from. */
   finalizedVendor?: Types.ObjectId;
+  /** The Department User/HOD's own pick among the quotations they've collected — purely
+   *  informational (shown to the Director as a signal, never restricts what they can approve).
+   *  Set/cleared via PATCH /requirements/:id/quotations/:quotationId/prepared. */
+  preparedQuotation?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -94,6 +98,7 @@ const requirementSchema = new Schema<IRequirement>(
     submittedAt:{ type: Date },
     submittedBy:{ type: Schema.Types.ObjectId, ref: 'User' },
     finalizedVendor: { type: Schema.Types.ObjectId, ref: 'Vendor' },
+    preparedQuotation: { type: Schema.Types.ObjectId, ref: 'Quotation' },
   },
   { timestamps: true },
 );

@@ -51,5 +51,10 @@ export const requirementListQuerySchema = z.object({
   search: z.string().optional(),
 });
 
+export const setPreparedQuotationSchema = z.object({
+  prepared: z.boolean(),
+});
+
 export type CreateRequirementInput = z.infer<typeof createRequirementSchema>;
 export type UpdateRequirementInput = z.infer<typeof updateRequirementSchema>;
+export type SetPreparedQuotationInput = z.infer<typeof setPreparedQuotationSchema>;
