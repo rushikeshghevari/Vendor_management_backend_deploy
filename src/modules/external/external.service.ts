@@ -1,7 +1,7 @@
 import { BILL_STATUS, QUOTATION_STATUS } from '@/constants/status';
 import { Bill } from '@/modules/bill/bill.model';
 import type { ExternalBillListQuery, ExternalUpcomingPaymentsQuery } from '@/modules/external/external.validation';
-import { formatQuotationApprovals } from '@/services/payment/paymentDueReminder.service';
+import { formatQuotationApprovals, getFirstApprovalDate } from '@/services/payment/paymentDueReminder.service';
 import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
 import { Requirement } from '@/modules/requirement/requirement.model';
 import { buildPaginationMeta, parsePagination } from '@/utils/pagination';
@@ -137,6 +137,7 @@ export const externalService = {
         daysRemaining: daysRemaining(bill.dueDate),
         status: bill.status,
         quotationApproval: formatQuotationApprovals(bill.quotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
+        approvedAt: getFirstApprovalDate(bill.quotation as unknown as Parameters<typeof getFirstApprovalDate>[0]),
       };
     });
 
@@ -154,6 +155,7 @@ export const externalService = {
         daysRemaining: daysRemaining(item.nextDueDate),
         status: 'upcoming',
         quotationApproval: formatQuotationApprovals(item.originQuotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
+        approvedAt: getFirstApprovalDate(item.originQuotation as unknown as Parameters<typeof getFirstApprovalDate>[0]),
       };
     });
 
@@ -168,9 +170,11 @@ export const externalService = {
       .map((req) => {
         const quotation = req.preparedQuotation as unknown as {
           amount: number;
+          status?: string;
           vendor?: { name?: string } | null;
           temporaryVendor?: { name?: string } | null;
         };
+        const approvedAt = getFirstApprovalDate(req.preparedQuotation as unknown as Parameters<typeof getFirstApprovalDate>[0]);
         return {
           id: String(req._id),
           type: 'prepared_quotation' as const,
@@ -180,8 +184,14 @@ export const externalService = {
           isTentative: true,
           dueDate: req.requiredDate,
           daysRemaining: daysRemaining(req.requiredDate),
-          status: 'prepared_pending_approval',
+          // Reflects the quotation's real, live status — flips from pending to approved the
+          // moment a Director decides, with no separate update step (see approvedAt below).
+          status: approvedAt ? 'prepared_approved' : 'prepared_pending_approval',
           quotationApproval: formatQuotationApprovals(req.preparedQuotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
+          // Two distinct events, often days apart: when the department picked this quotation,
+          // and when a Director actually approved it (null until that happens).
+          preparedAt: req.preparedQuotationAt ?? null,
+          approvedAt,
         };
       });
 

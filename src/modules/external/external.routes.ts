@@ -60,6 +60,8 @@ router.get('/bills', validate({ query: externalBillListQuerySchema }), externalC
  *                       daysRemaining: { type: integer, description: Negative means overdue }
  *                       status: { type: string }
  *                       quotationApproval: { type: string, description: Which Director(s) approved the originating quotation, and when }
+ *                       approvedAt: { type: string, format: date-time, nullable: true, description: Raw timestamp of the first Director approval on record, or null if not yet approved }
+ *                       preparedAt: { type: string, format: date-time, nullable: true, description: prepared_quotation only — when the department marked this quotation as prepared }
  *       401:
  *         description: Missing or invalid X-API-Key header
  */

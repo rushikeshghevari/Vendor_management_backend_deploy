@@ -53,6 +53,16 @@ export function formatQuotationApprovals(
     .join(', ');
 }
 
+/** The raw timestamp of the first Director approval on record, for a consumer that wants a
+ *  parseable date rather than `formatQuotationApprovals`' human-readable string. `null` when
+ *  no Director has approved yet — same "not approved" case `formatQuotationApprovals` reports. */
+export function getFirstApprovalDate(
+  quotation: { directorApprovals?: ApprovalLike[] } | null | undefined,
+): Date | null {
+  const approved = (quotation?.directorApprovals ?? []).find((a) => a.decision === 'approved');
+  return approved ? new Date(approved.decidedAt) : null;
+}
+
 async function notifyBillsDue(now: Date): Promise<void> {
   const paymentTeam = await notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT);
   if (paymentTeam.length === 0) return;

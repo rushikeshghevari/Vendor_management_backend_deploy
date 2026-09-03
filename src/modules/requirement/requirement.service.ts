@@ -339,8 +339,10 @@ export const requirementService = {
 
     if (input.prepared) {
       requirement.preparedQuotation = new Types.ObjectId(quotationId);
+      requirement.preparedQuotationAt = new Date();
     } else if (requirement.preparedQuotation?.toString() === quotationId) {
       requirement.preparedQuotation = undefined;
+      requirement.preparedQuotationAt = undefined;
     }
     await requirement.save();
     return requirement;

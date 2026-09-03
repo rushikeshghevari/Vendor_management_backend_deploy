@@ -67,6 +67,11 @@ export interface IRequirement extends Document {
    *  informational (shown to the Director as a signal, never restricts what they can approve).
    *  Set/cleared via PATCH /requirements/:id/quotations/:quotationId/prepared. */
   preparedQuotation?: Types.ObjectId;
+  /** When `preparedQuotation` was last set — lets a consumer (e.g. the external Payments API)
+   *  show "picked on X" alongside "approved on Y" as two distinct dates, since marking a
+   *  quotation prepared and a Director approving it are two separate events that can be days
+   *  apart. Cleared alongside `preparedQuotation` when unmarked. */
+  preparedQuotationAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -99,6 +104,7 @@ const requirementSchema = new Schema<IRequirement>(
     submittedBy:{ type: Schema.Types.ObjectId, ref: 'User' },
     finalizedVendor: { type: Schema.Types.ObjectId, ref: 'Vendor' },
     preparedQuotation: { type: Schema.Types.ObjectId, ref: 'Quotation' },
+    preparedQuotationAt: { type: Date },
   },
   { timestamps: true },
 );
