@@ -51,12 +51,12 @@ router.get('/bills', validate({ query: externalBillListQuerySchema }), externalC
  *                     type: object
  *                     properties:
  *                       id: { type: string }
- *                       type: { type: string, enum: [bill, recurring_expense] }
- *                       reference: { type: string, description: Bill code, or the recurring expense's title }
+ *                       type: { type: string, enum: [bill, recurring_expense, prepared_quotation] }
+ *                       reference: { type: string, description: Bill code, recurring expense's title, or "requirementNumber — title" for a prepared quotation }
  *                       payee: { type: string }
  *                       amount: { type: number }
- *                       isTentative: { type: boolean, description: true for a recurring cycle whose real invoice hasn't been generated yet }
- *                       dueDate: { type: string, format: date-time }
+ *                       isTentative: { type: boolean, description: true for a recurring cycle or a prepared quotation, where the real invoice/approval doesn't exist yet }
+ *                       dueDate: { type: string, format: date-time, description: For prepared_quotation this is the Requirement's requiredDate (goods needed by), not a real payment due date — no such date exists this early }
  *                       daysRemaining: { type: integer, description: Negative means overdue }
  *                       status: { type: string }
  *                       quotationApproval: { type: string, description: Which Director(s) approved the originating quotation, and when }

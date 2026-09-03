@@ -1,8 +1,9 @@
-import { BILL_STATUS } from '@/constants/status';
+import { BILL_STATUS, QUOTATION_STATUS } from '@/constants/status';
 import { Bill } from '@/modules/bill/bill.model';
 import type { ExternalBillListQuery, ExternalUpcomingPaymentsQuery } from '@/modules/external/external.validation';
 import { formatQuotationApprovals } from '@/services/payment/paymentDueReminder.service';
 import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
+import { Requirement } from '@/modules/requirement/requirement.model';
 import { buildPaginationMeta, parsePagination } from '@/utils/pagination';
 
 interface ExternalBillItem {
@@ -70,11 +71,17 @@ export const externalService = {
 
   /**
    * GET /external/payments/upcoming — everything Payment Department needs to see coming due
-   * within `withinDays` (overdue items included, never excluded), merged from two sources:
+   * within `withinDays` (overdue items included, never excluded), merged from three sources,
+   * ordered here from most to least certain:
    *  - Bill (isTentative: false) — already VERIFIED/PAYMENT_PENDING, so invoiceAmount is real.
    *  - RecurringExpense (isTentative: true) — a cycle hasn't been generated yet, so amount is
    *    only the originally Director-approved baseline, not the eventual real invoice.
-   * Pagination is applied after merging+sorting the two sources (both bounded by the same
+   *  - Requirement.preparedQuotation (isTentative: true) — the department's own pick, before
+   *    Director approval even exists. The earliest possible signal, so also the least certain:
+   *    amount, vendor, and whether it happens at all can still change. No real due date exists
+   *    this early either, so `dueDate` falls back to the Requirement's `requiredDate` (when the
+   *    goods are needed, not a payment date) — an intentional approximation, not a promise.
+   * Pagination is applied after merging+sorting all three sources (each bounded by the same
    * `withinDays` window, so the combined set stays small) rather than at the DB-query level,
    * since there's no single collection to paginate across.
    */
@@ -83,7 +90,7 @@ export const externalService = {
     const now = new Date();
     const cutoff = addDays(now, query.withinDays);
 
-    const [bills, series] = await Promise.all([
+    const [bills, series, requirements] = await Promise.all([
       Bill.find({
         status: { $in: [BILL_STATUS.VERIFIED, BILL_STATUS.PAYMENT_PENDING] },
         isDeleted: { $ne: true },
@@ -97,6 +104,19 @@ export const externalService = {
         .populate('vendor', 'name')
         .populate('reimbursedTo', 'name')
         .populate({ path: 'originQuotation', populate: { path: 'directorApprovals.director', select: 'name' } })
+        .lean(),
+      Requirement.find({
+        preparedQuotation: { $exists: true, $ne: null },
+        isDeleted: { $ne: true },
+        requiredDate: { $lte: cutoff },
+      })
+        .populate({
+          path: 'preparedQuotation',
+          populate: [
+            { path: 'vendor', select: 'name' },
+            { path: 'directorApprovals.director', select: 'name' },
+          ],
+        })
         .lean(),
     ]);
 
@@ -137,7 +157,35 @@ export const externalService = {
       };
     });
 
-    const merged = [...billItems, ...recurringItems].sort(
+    // Excludes a prepared quotation that already turned into a real Bill (billed) or that a
+    // Director rejected — both are stale signals once the Bill/RecurringExpense tiers above
+    // already cover (or definitively won't cover) the same spend.
+    const preparedItems = requirements
+      .filter((req) => {
+        const quotation = req.preparedQuotation as unknown as { status?: string } | null;
+        return quotation && quotation.status !== QUOTATION_STATUS.BILLED && quotation.status !== QUOTATION_STATUS.REJECTED;
+      })
+      .map((req) => {
+        const quotation = req.preparedQuotation as unknown as {
+          amount: number;
+          vendor?: { name?: string } | null;
+          temporaryVendor?: { name?: string } | null;
+        };
+        return {
+          id: String(req._id),
+          type: 'prepared_quotation' as const,
+          reference: `${req.requirementNumber} - ${req.title}`,
+          payee: quotation.vendor?.name ?? quotation.temporaryVendor?.name ?? 'Unknown',
+          amount: quotation.amount,
+          isTentative: true,
+          dueDate: req.requiredDate,
+          daysRemaining: daysRemaining(req.requiredDate),
+          status: 'prepared_pending_approval',
+          quotationApproval: formatQuotationApprovals(req.preparedQuotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
+        };
+      });
+
+    const merged = [...billItems, ...recurringItems, ...preparedItems].sort(
       (a, b) => a.dueDate.getTime() - b.dueDate.getTime(),
     );
 
