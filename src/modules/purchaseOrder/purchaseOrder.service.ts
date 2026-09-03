@@ -362,6 +362,12 @@ export const purchaseOrderService = {
     paid: number;
     closed: number;
     total: number;
+    // Requirement-driven pipeline, not part of the status enum above — a Requirement-originated
+    // PO (`requirement` set) needs a Goods Receipt recorded before a Bill can even be created
+    // (see docs/PHASE8_GOODS_RECEIPT.md), so these two counts are the "what's blocking me from
+    // moving this PO forward" queue, surfaced as drawer badges rather than buried in PO Details.
+    pendingGoodsReceipt: number;
+    pendingBill: number;
   }> {
     const baseFilter: Record<string, unknown> = { isDeleted: false };
     scopeToRole(actor, baseFilter);
@@ -369,6 +375,7 @@ export const purchaseOrderService = {
     const [
       generated, billUploaded, aiVerificationPending, aiVerified,
       accountsVerified, paymentPending, paid, closed, total,
+      pendingGoodsReceipt, pendingBill,
     ] = await Promise.all([
       PurchaseOrder.countDocuments({ ...baseFilter, status: PO_STATUS.GENERATED }),
       PurchaseOrder.countDocuments({ ...baseFilter, status: PO_STATUS.BILL_UPLOADED }),
@@ -379,8 +386,21 @@ export const purchaseOrderService = {
       PurchaseOrder.countDocuments({ ...baseFilter, status: PO_STATUS.PAID }),
       PurchaseOrder.countDocuments({ ...baseFilter, status: PO_STATUS.CLOSED }),
       PurchaseOrder.countDocuments(baseFilter),
+      PurchaseOrder.countDocuments({
+        ...baseFilter,
+        requirement: { $exists: true, $ne: null },
+        goodsReceipt: { $exists: false },
+      }),
+      PurchaseOrder.countDocuments({
+        ...baseFilter,
+        goodsReceipt: { $exists: true, $ne: null },
+        bill: { $exists: false },
+      }),
     ]);
 
-    return { generated, billUploaded, aiVerificationPending, aiVerified, accountsVerified, paymentPending, paid, closed, total };
+    return {
+      generated, billUploaded, aiVerificationPending, aiVerified, accountsVerified,
+      paymentPending, paid, closed, total, pendingGoodsReceipt, pendingBill,
+    };
   },
 };
