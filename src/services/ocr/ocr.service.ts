@@ -26,10 +26,16 @@ export interface ExtractedInvoiceData {
 }
 
 // ── Helper: extract values using patterns ─────────────────────────────────────
+// Gemini Vision's image-OCR prompt (extractTextFromImage) writes "Not Present" for any
+// field it couldn't find — without this guard that literal string gets captured as if it
+// were the real value.
+const PLACEHOLDER_VALUE = /^(not\s*present|n\/?a|none|-)$/i;
+
 function extractWithPattern(text: string, patterns: RegExp[]): string | undefined {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1].trim();
+    const value = match?.[1]?.trim();
+    if (value && !PLACEHOLDER_VALUE.test(value)) return value;
   }
   return undefined;
 }
@@ -46,44 +52,49 @@ function parseInvoiceText(rawText: string): ExtractedInvoiceData {
   const text = rawText.replace(/\s+/g, ' ');
 
   const invoiceNumber = extractWithPattern(text, [
-    /invoice\s*(?:no|number|#)[:\s]+([A-Z0-9\-\/]+)/i,
-    /inv\s*no[:\s]+([A-Z0-9\-\/]+)/i,
-    /bill\s*no[:\s]+([A-Z0-9\-\/]+)/i,
+    /invoice[\s_]*(?:no|number|#)[:\s]+([A-Z0-9\-\/]+)/i,
+    /inv[\s_]*no[:\s]+([A-Z0-9\-\/]+)/i,
+    /bill[\s_]*no[:\s]+([A-Z0-9\-\/]+)/i,
   ]);
 
   const invoiceDate = extractWithPattern(text, [
-    /invoice\s*date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
+    /invoice[\s_]*date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
     /date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
     /dated[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
   ]);
 
   const poNumber = extractWithPattern(text, [
-    /p\.?o\.?\s*(?:no|number|#)[:\s]+([A-Z0-9\-]+)/i,
-    /purchase\s*order\s*(?:no|#)?[:\s]+([A-Z0-9\-]+)/i,
-    /order\s*ref[:\s]+([A-Z0-9\-]+)/i,
+    /p\.?o\.?[\s_]*(?:no|number|#)[:\s]+([A-Z0-9\-]+)/i,
+    /purchase[\s_]*order[\s_]*(?:no|#)?[:\s]+([A-Z0-9\-]+)/i,
+    /order[\s_]*ref[:\s]+([A-Z0-9\-]+)/i,
   ]);
 
   const vendorName = extractWithPattern(text, [
+    // Gemini Vision's image OCR writes "VENDOR_NAME: ..." on its own line — matched to
+    // end-of-line first, since underscore-joined labels don't fit the freeform
+    // "vendor: X, GST ..." shape pdf-parse text tends to have (below).
+    /vendor[\s_]*name[:\s]+([^\n]+)/i,
     /(?:from|supplier|vendor|seller)[:\s]+([A-Za-z0-9\s&.,Pvt.Ltd]+?)(?:\n|,|GST)/i,
     /company\s*name[:\s]+([A-Za-z0-9\s&.,]+?)(?:\n|,)/i,
   ]);
 
   const vendorGst = extractWithPattern(text, [
     /GSTIN?[:\s]+([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i,
-    /GST\s*(?:No|Number)[:\s]+([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i,
+    /GST[\s_]*(?:No|Number)[:\s]+([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i,
+    /vendor[\s_]*gst[\s_]*(?:no|number)?[:\s]+([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i,
   ]);
 
   const grandTotal = extractNumber(text, [
-    /grand\s*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /total\s*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /net\s*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /amount\s*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /grand[\s_]*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /total[\s_]*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /net[\s_]*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /amount[\s_]*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
   ]);
 
   const subtotal = extractNumber(text, [
-    /sub\s*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /taxable\s*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /basic\s*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /sub[\s_]*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /taxable[\s_]*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /basic[\s_]*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
   ]);
 
   // Confidence score: +15 per field extracted

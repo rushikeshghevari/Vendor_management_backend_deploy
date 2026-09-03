@@ -80,6 +80,10 @@ export const NOTIFICATION_TYPES = [
   'reminder',
   // Recurring Expense
   'recurring_expense_due',
+  // Payment due-date reminder (7-day-out nudge to Payment Department) — see
+  // paymentDueReminder.service.ts. Covers both a confirmed Bill.dueDate and a tentative
+  // RecurringExpense.nextDueDate (real invoice not generated yet).
+  'payment_due_reminder',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

@@ -10,6 +10,7 @@ import { createApp } from '@/app';
 import { connectDB, disconnectDB } from '@/config/db';
 import { env } from '@/config/env';
 import { startEscalationScheduler, stopEscalationScheduler } from '@/services/escalation/escalation.service';
+import { startPaymentDueReminderScheduler, stopPaymentDueReminderScheduler } from '@/services/payment/paymentDueReminder.service';
 import { startQueueProcessor, stopQueueProcessor } from '@/services/push/notificationQueue.service';
 import { startRecurringExpenseReminderScheduler, stopRecurringExpenseReminderScheduler } from '@/services/recurringExpense/recurringExpenseReminder.service';
 import { startReminderScheduler, stopReminderScheduler } from '@/services/reminder/reminder.service';
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
   startQueueProcessor();
   startReminderScheduler();
   startRecurringExpenseReminderScheduler();
+  startPaymentDueReminderScheduler();
 
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
     stopQueueProcessor();
     stopReminderScheduler();
     stopRecurringExpenseReminderScheduler();
+    stopPaymentDueReminderScheduler();
     server.close(async () => {
       await disconnectDB();
       process.exit(0);

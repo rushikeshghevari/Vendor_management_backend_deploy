@@ -13,3 +13,17 @@ export const externalBillListQuerySchema = z.object({
 });
 
 export type ExternalBillListQuery = z.infer<typeof externalBillListQuerySchema>;
+
+// GET /external/payments/upcoming — merges confirmed Bill.dueDate entries with tentative
+// RecurringExpense.nextDueDate entries (real invoice not generated yet) into one list, for the
+// same Payment-department calendar-reminder integration described above.
+export const externalUpcomingPaymentsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  // Defaults to 7 (not optional-with-no-default) since this endpoint's whole purpose is
+  // "what's coming due soon" — unlike externalBillListQuerySchema's dueWithinDays, which only
+  // filters when a caller opts in. Overdue items (daysRemaining < 0) are always included too.
+  withinDays: z.coerce.number().int().min(0).max(365).default(7),
+});
+
+export type ExternalUpcomingPaymentsQuery = z.infer<typeof externalUpcomingPaymentsQuerySchema>;

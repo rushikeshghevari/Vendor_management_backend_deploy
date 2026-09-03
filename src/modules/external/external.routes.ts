@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { apiKeyAuth } from '@/middleware/apiKey.middleware';
 import { validate } from '@/middleware/validate.middleware';
 import { externalController } from '@/modules/external/external.controller';
-import { externalBillListQuerySchema } from '@/modules/external/external.validation';
+import { externalBillListQuerySchema, externalUpcomingPaymentsQuerySchema } from '@/modules/external/external.validation';
 
 const router = Router();
 
@@ -17,5 +17,52 @@ const router = Router();
 router.use(apiKeyAuth);
 
 router.get('/bills', validate({ query: externalBillListQuerySchema }), externalController.listBills);
+
+/**
+ * @openapi
+ * /external/payments/upcoming:
+ *   get:
+ *     tags: [External]
+ *     summary: Payments coming due within N days (default 7) — confirmed Bills plus tentative RecurringExpense cycles, with Director approval info
+ *     security: [{ apiKeyAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: withinDays
+ *         schema: { type: integer, minimum: 0, maximum: 365, default: 7 }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100 }
+ *     responses:
+ *       200:
+ *         description: Upcoming payments fetched
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: Upcoming payments fetched }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: string }
+ *                       type: { type: string, enum: [bill, recurring_expense] }
+ *                       reference: { type: string, description: Bill code, or the recurring expense's title }
+ *                       payee: { type: string }
+ *                       amount: { type: number }
+ *                       isTentative: { type: boolean, description: true for a recurring cycle whose real invoice hasn't been generated yet }
+ *                       dueDate: { type: string, format: date-time }
+ *                       daysRemaining: { type: integer, description: Negative means overdue }
+ *                       status: { type: string }
+ *                       quotationApproval: { type: string, description: Which Director(s) approved the originating quotation, and when }
+ *       401:
+ *         description: Missing or invalid X-API-Key header
+ */
+router.get('/payments/upcoming', validate({ query: externalUpcomingPaymentsQuerySchema }), externalController.listUpcomingPayments);
 
 export default router;

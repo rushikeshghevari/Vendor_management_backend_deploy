@@ -42,6 +42,8 @@ export function computeNextDueDate(from: Date, frequency: string): Date {
   const next = new Date(from);
   if (frequency === RECURRING_FREQUENCY.MONTHLY) {
     next.setMonth(next.getMonth() + 1);
+  } else if (frequency === RECURRING_FREQUENCY.QUARTERLY) {
+    next.setMonth(next.getMonth() + 3);
   } else if (frequency === RECURRING_FREQUENCY.HALF_YEARLY) {
     next.setMonth(next.getMonth() + 6);
   } else {

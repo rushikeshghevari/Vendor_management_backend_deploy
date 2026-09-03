@@ -157,6 +157,7 @@ export type GrnOverallCondition = (typeof GRN_OVERALL_CONDITION)[keyof typeof GR
 // amount rises past the series' threshold. See recurringExpense.model.ts.
 export const RECURRING_FREQUENCY = {
   MONTHLY: 'monthly',
+  QUARTERLY: 'quarterly',
   HALF_YEARLY: 'half_yearly',
   YEARLY: 'yearly',
 } as const;

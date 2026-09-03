@@ -11,10 +11,16 @@ import type { IQuotationOcrItem, IQuotationOcrStructuredData } from '@/modules/q
  * optional on the stored result.
  */
 
+/** Gemini Vision's image-OCR prompt (`extractTextFromImage`) writes "Not Present" for any
+ *  field it couldn't find on the document — without this guard that literal string gets
+ *  captured as if it were the real value (e.g. vendorName = "Not Present"). */
+const PLACEHOLDER_VALUE = /^(not\s*present|n\/?a|none|-)$/i;
+
 function extractWithPattern(text: string, patterns: RegExp[]): string | undefined {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1].trim();
+    const value = match?.[1]?.trim();
+    if (value && !PLACEHOLDER_VALUE.test(value)) return value;
   }
   return undefined;
 }
@@ -29,7 +35,7 @@ function extractNumber(text: string, patterns: RegExp[]): number | undefined {
 const CURRENCY_SYMBOLS: Record<string, string> = { '₹': 'INR', 'rs': 'INR', 'inr': 'INR', '$': 'USD', '€': 'EUR', '£': 'GBP' };
 
 function extractCurrency(text: string): string | undefined {
-  const match = text.match(/(₹|\$|€|£|\bINR\b|\bUSD\b|\bEUR\b|\bGBP\b)/i);
+  const match = text.match(/(₹|\$|€|£|\bINR\b|\bUSD\b|\bEUR\b|\bGBP\b|\bRs\b)/i);
   const symbol = match?.[1];
   if (!symbol) return undefined;
   return CURRENCY_SYMBOLS[symbol.toLowerCase()] ?? symbol.toUpperCase();
@@ -49,7 +55,11 @@ function extractItems(text: string): IQuotationOcrItem[] {
   const rowPattern = /^(.{3,60}?)\s+(\d+(?:\.\d+)?)\s*(pcs|nos|units?|kg|box(?:es)?|set|ea)?\s*(?:x|@)?\s*(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d+)?)\s*(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d+)?)?$/i;
 
   for (const line of lines) {
-    if (/^(sub\s*total|grand\s*total|gst|discount|tax|total)\b/i.test(line)) continue;
+    if (/^(sub[\s_]*total|grand[\s_]*total|gst|discount|tax|total)\b/i.test(line)) continue;
+    // Gemini Vision's image OCR writes one structured "FIELD_NAME: value" line per field
+    // (see extractTextFromImage's prompt) — never an item row, so skip it outright rather
+    // than let the row pattern below mistake the label for a description.
+    if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:/.test(line)) continue;
     const match = line.match(rowPattern);
     if (!match) continue;
 
@@ -88,6 +98,10 @@ export function parseQuotationText(rawText: string): IQuotationOcrStructuredData
   const text = rawText.replace(/[ \t]+/g, ' ');
 
   const vendorName = extractWithPattern(text, [
+    // Gemini Vision's image OCR (extractTextFromImage) writes "VENDOR_NAME: ..." on its own
+    // line — matched first, and up to end-of-line, since underscore-joined labels don't fit
+    // the freeform "vendor: X, GST ..." shape pdf-parse text tends to have (below).
+    /vendor[\s_]*name[:\s]+([^\n]+)/i,
     /(?:from|supplier|vendor|seller|quoted\s*by)[:\s]+([A-Za-z0-9\s&.,Pvt.Ltd]+?)(?:\n|,|GST)/i,
     /company\s*name[:\s]+([A-Za-z0-9\s&.,]+?)(?:\n|,)/i,
   ]) ?? extractFirstLineAsVendorName(rawText);
@@ -96,22 +110,27 @@ export function parseQuotationText(rawText: string): IQuotationOcrStructuredData
     /quotation\s*(?:no|number|#)[:\s]+([A-Z0-9\-\/]+)/i,
     /quote\s*(?:no|#)[:\s]+([A-Z0-9\-\/]+)/i,
     /ref(?:erence)?\s*(?:no|#)[:\s]+([A-Z0-9\-\/]+)/i,
+    // Fallback for Gemini's image OCR, which only ever labels an "INVOICE_NUMBER" (its
+    // prompt is shared with Bill/invoice verification) — close enough to use as-is when
+    // nothing more quotation-specific was found.
+    /invoice[\s_]*number[:\s]+([A-Z0-9\-\/]+)/i,
   ]);
 
   const quotationDate = extractWithPattern(text, [
-    /quotation\s*date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
+    /quotation[\s_]*date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
+    /invoice[\s_]*date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
     /date[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
     /dated[:\s]+(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/i,
   ]);
 
   const subtotal = extractNumber(text, [
-    /sub\s*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /taxable\s*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /sub[\s_]*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /taxable[\s_]*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
   ]);
 
   const gst = extractNumber(text, [
-    /gst(?:\s*\(?\d*%?\)?)?[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /tax(?:\s*amount)?[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /gst[\s_]*(?:total|amount)?(?:\s*\(?\d*%?\)?)?[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /tax[\s_]*(?:total|amount)?[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
   ]);
 
   const discount = extractNumber(text, [
@@ -119,9 +138,9 @@ export function parseQuotationText(rawText: string): IQuotationOcrStructuredData
   ]);
 
   const grandTotal = extractNumber(text, [
-    /grand\s*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /total\s*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
-    /net\s*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /grand[\s_]*total[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /total[\s_]*amount[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
+    /net[\s_]*payable[:\s]+(?:INR|Rs\.?|₹)?\s*([\d,]+(?:\.\d{2})?)/i,
   ]);
 
   const currency = extractCurrency(text);

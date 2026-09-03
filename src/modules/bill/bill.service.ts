@@ -683,6 +683,7 @@ export const billService = {
     const uploader = await User.findById(actor.id).select('name role').lean();
 
     const bill = await Bill.create({
+      billCode,
       quotation: quotation._id,
       vendor,
       reimbursedTo,
