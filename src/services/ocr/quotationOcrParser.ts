@@ -102,8 +102,12 @@ export function parseQuotationText(rawText: string): IQuotationOcrStructuredData
     // line — matched first, and up to end-of-line, since underscore-joined labels don't fit
     // the freeform "vendor: X, GST ..." shape pdf-parse text tends to have (below).
     /vendor[\s_]*name[:\s]+([^\n]+)/i,
-    /(?:from|supplier|vendor|seller|quoted\s*by)[:\s]+([A-Za-z0-9\s&.,Pvt.Ltd]+?)(?:\n|,|GST)/i,
-    /company\s*name[:\s]+([A-Za-z0-9\s&.,]+?)(?:\n|,)/i,
+    // Anchored to the start of a line with a required colon — "from"/"supplier"/"seller" are
+    // common English words that show up mid-sentence in ordinary quotation prose (e.g. "valid
+    // for 15 days from the date of issue"), so without the anchor+colon this used to grab
+    // whatever followed the word "from" anywhere in the document as if it were a vendor label.
+    /^\s*(?:from|supplier|vendor|seller|quoted\s*by)\s*:\s*([^\n]+)/im,
+    /^\s*company\s*name\s*:\s*([^\n]+)/im,
   ]) ?? extractFirstLineAsVendorName(rawText);
 
   const quotationNumber = extractWithPattern(text, [
