@@ -49,14 +49,20 @@ interface DateCountRow { key: string; count: number }
 /** Groups documents in `model` matching `department` and `createdAt >= since` by day or
  *  month, returning a dense (gap-filled) series so charts don't have to handle missing days. */
 async function countGrouped(
-  model: typeof Quotation | typeof Bill | typeof Vendor,
+  model: typeof Quotation | typeof Bill | typeof Vendor | typeof Requirement | typeof PurchaseOrder,
   departmentId: string,
   since: Date,
   granularity: 'day' | 'month',
 ): Promise<DateCountRow[]> {
   const format = granularity === 'day' ? '%Y-%m-%d' : '%Y-%m';
   const rows = await model.aggregate<{ _id: string; count: number }>([
-    { $match: { department: new Types.ObjectId(departmentId), createdAt: { $gte: since } } },
+    {
+      $match: {
+        department: new Types.ObjectId(departmentId),
+        createdAt: { $gte: since },
+        isDeleted: { $ne: true },
+      },
+    },
     { $group: { _id: { $dateToString: { format, date: '$createdAt' } }, count: { $sum: 1 } } },
   ]);
   const rowMap = new Map(rows.map((r) => [r._id, r.count]));
@@ -178,7 +184,9 @@ export const departmentService = {
       completedBills,
       weeklyQuotations,
       weeklyBills,
+      monthlyRequirements,
       monthlyQuotations,
+      monthlyPurchaseOrders,
       monthlyBills,
       vendorGrowth,
       quotationStatusBreakdown,
@@ -209,7 +217,9 @@ export const departmentService = {
       }),
       countGrouped(Quotation, departmentId, daysAgo(6), 'day'),
       countGrouped(Bill, departmentId, daysAgo(6), 'day'),
+      countGrouped(Requirement, departmentId, monthsAgo(5), 'month'),
       countGrouped(Quotation, departmentId, monthsAgo(5), 'month'),
+      countGrouped(PurchaseOrder, departmentId, monthsAgo(5), 'month'),
       countGrouped(Bill, departmentId, monthsAgo(5), 'month'),
       countGrouped(Vendor, departmentId, monthsAgo(5), 'month'),
       statusBreakdown(Quotation, departmentId),
@@ -237,6 +247,10 @@ export const departmentService = {
       weeklyActivity,
       monthlyTrend,
       vendorGrowth: vendorGrowth.map((row) => ({ month: row.key, count: row.count })),
+      requirementTrend: monthlyRequirements.map((row) => row.count),
+      quotationTrend: monthlyQuotations.map((row) => row.count),
+      purchaseOrderTrend: monthlyPurchaseOrders.map((row) => row.count),
+      billTrend: monthlyBills.map((row) => row.count),
       quotationStatusBreakdown,
       billStatusBreakdown,
     };

@@ -279,6 +279,22 @@ router.get('/:id', validate({ params: mongoIdParamSchema() }), departmentControl
  *                         properties:
  *                           month: { type: string, example: "2026-07" }
  *                           count: { type: integer }
+ *                     requirementTrend:
+ *                       type: array
+ *                       description: Last 6 months, requirements raised per month (chronological)
+ *                       items: { type: integer }
+ *                     quotationTrend:
+ *                       type: array
+ *                       description: Last 6 months, quotations created per month (chronological)
+ *                       items: { type: integer }
+ *                     purchaseOrderTrend:
+ *                       type: array
+ *                       description: Last 6 months, purchase orders created per month (chronological)
+ *                       items: { type: integer }
+ *                     billTrend:
+ *                       type: array
+ *                       description: Last 6 months, bills created per month (chronological)
+ *                       items: { type: integer }
  *                     quotationStatusBreakdown:
  *                       type: array
  *                       description: One entry per quotation status value that has at least one matching document
