@@ -57,9 +57,10 @@ router.get('/bills', validate({ query: externalBillListQuerySchema }), externalC
  *                       amount: { type: number }
  *                       advanceAmount: { type: number, description: "prepared_quotation only — how much of amount the vendor wants paid before the PO/goods (0 if none). May be a Director-overridden quotation's own advance, not necessarily the department's original pick." }
  *                       balanceAmount: { type: number, description: "prepared_quotation only — amount minus advanceAmount, due per the quotation's own credit period once the PO is raised" }
+ *                       advanceDueDate: { type: string, format: date-time, nullable: true, description: "prepared_quotation only — the department's planned PO-raise date, i.e. the real deadline for advanceAmount (a vendor typically won't confirm the order until the advance lands). Null if never set." }
  *                       expectedDeliveryDate: { type: string, format: date-time, nullable: true, description: "prepared_quotation only — the vendor's own promised delivery date for this quotation, or null if never set" }
  *                       isTentative: { type: boolean, description: true for a recurring cycle or a prepared quotation, where the real invoice/approval doesn't exist yet }
- *                       dueDate: { type: string, format: date-time, description: For prepared_quotation this is the Requirement's requiredDate (goods needed by), not a real payment due date — no such date exists this early }
+ *                       dueDate: { type: string, format: date-time, description: "For prepared_quotation, this is the Requirement's requiredDate (a rough goods-needed-by estimate) until the quotation is fully Director-approved, at which point it switches to the vendor's real expectedDeliveryDate when one was set" }
  *                       daysRemaining: { type: integer, description: Negative means overdue }
  *                       status: { type: string }
  *                       quotationApproval: { type: string, description: Which Director(s) approved the originating quotation, and when }

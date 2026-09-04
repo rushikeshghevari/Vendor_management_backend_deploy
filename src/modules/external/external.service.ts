@@ -191,6 +191,7 @@ export const externalService = {
           amount: number;
           advanceAmount?: number;
           expectedDeliveryDate?: Date;
+          expectedPODate?: Date;
           status?: string;
           vendor?: { name?: string } | null;
           temporaryVendor?: { name?: string } | null;
@@ -203,10 +204,16 @@ export const externalService = {
             amount: quotation.amount,
             advanceAmount: quotation.advanceAmount,
             expectedDeliveryDate: quotation.expectedDeliveryDate,
+            expectedPODate: quotation.expectedPODate,
           },
           reviewMap,
         );
         const finalAmount = approval.approvedAt ? approval.approvedAmount : quotation.amount;
+        // Before approval there's no real delivery commitment yet, so `dueDate` stays the
+        // Requirement's own rough `requiredDate` (goods needed by). Once approved, the vendor's
+        // actual promised `expectedDeliveryDate` is a far more accurate "when will this be
+        // fulfilled" signal — switch to it the moment it's available.
+        const dueDate = approval.approvedAt && approval.expectedDeliveryDate ? approval.expectedDeliveryDate : req.requiredDate;
         return {
           id: String(req._id),
           type: 'prepared_quotation' as const,
@@ -220,10 +227,13 @@ export const externalService = {
           // goods, and what's left for after (paid per the quotation's own credit period).
           advanceAmount: approval.advanceAmount,
           balanceAmount: Math.max(finalAmount - approval.advanceAmount, 0),
+          // The real deadline for `advanceAmount` above — the department's own planned PO-raise
+          // date, since a vendor typically won't confirm the order until the advance lands.
+          advanceDueDate: approval.expectedPODate,
           expectedDeliveryDate: approval.expectedDeliveryDate,
           isTentative: true,
-          dueDate: req.requiredDate,
-          daysRemaining: daysRemaining(req.requiredDate),
+          dueDate,
+          daysRemaining: daysRemaining(dueDate),
           // Reflects the Requirement's real, live Dual Director Approval status — flips from
           // pending to approved only once EVERY Director has approved, with no separate
           // update step (see approvedAt below).

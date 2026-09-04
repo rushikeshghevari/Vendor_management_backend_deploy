@@ -75,7 +75,7 @@ interface DirectorReviewApprovalEntryLike {
 interface DirectorReviewLike {
   decision: string;
   decisionDate?: Date;
-  selectedQuotation?: { amount?: number; advanceAmount?: number; expectedDeliveryDate?: Date } | null;
+  selectedQuotation?: { amount?: number; advanceAmount?: number; expectedDeliveryDate?: Date; expectedPODate?: Date } | null;
   approvals: DirectorReviewApprovalEntryLike[];
 }
 
@@ -90,6 +90,8 @@ export interface QuotationApprovalInfo {
   /** The vendor's own promised delivery date, from whichever quotation actually got approved
    *  (may differ from the department's original "prepared" pick if a Director overrode it). */
   expectedDeliveryDate: Date | null;
+  /** When the department expects to raise the PO — the real deadline for `advanceAmount`. */
+  expectedPODate: Date | null;
 }
 
 /** A Requirement-linked Quotation (the normal Requirement → Quotation → Dual Director
@@ -107,7 +109,7 @@ export async function loadDirectorReviewsByRequirement(
   if (ids.length === 0) return new Map();
 
   const reviews = await DirectorReview.find({ requirement: { $in: ids } })
-    .populate('selectedQuotation', 'amount advanceAmount expectedDeliveryDate')
+    .populate('selectedQuotation', 'amount advanceAmount expectedDeliveryDate expectedPODate')
     .select('requirement decision decisionDate selectedQuotation approvals')
     .lean();
 
@@ -127,6 +129,7 @@ export function resolveQuotationApproval(
         amount?: number;
         advanceAmount?: number;
         expectedDeliveryDate?: Date;
+        expectedPODate?: Date;
         directorApprovals?: ApprovalLike[];
       }
     | null
@@ -154,6 +157,11 @@ export function resolveQuotationApproval(
         : quotation?.expectedDeliveryDate
           ? new Date(quotation.expectedDeliveryDate)
           : null,
+      expectedPODate: review.selectedQuotation?.expectedPODate
+        ? new Date(review.selectedQuotation.expectedPODate)
+        : quotation?.expectedPODate
+          ? new Date(quotation.expectedPODate)
+          : null,
     };
   }
 
@@ -163,6 +171,7 @@ export function resolveQuotationApproval(
     approvedAmount: quotation?.amount ?? 0,
     advanceAmount: quotation?.advanceAmount ?? 0,
     expectedDeliveryDate: quotation?.expectedDeliveryDate ? new Date(quotation.expectedDeliveryDate) : null,
+    expectedPODate: quotation?.expectedPODate ? new Date(quotation.expectedPODate) : null,
   };
 }
 

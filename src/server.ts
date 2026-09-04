@@ -9,6 +9,7 @@ dns.setDefaultResultOrder('ipv4first');
 import { createApp } from '@/app';
 import { connectDB, disconnectDB } from '@/config/db';
 import { env } from '@/config/env';
+import { startDirectorApprovalReminderScheduler, stopDirectorApprovalReminderScheduler } from '@/services/directorReview/directorApprovalReminder.service';
 import { startEscalationScheduler, stopEscalationScheduler } from '@/services/escalation/escalation.service';
 import { startPaymentDueReminderScheduler, stopPaymentDueReminderScheduler } from '@/services/payment/paymentDueReminder.service';
 import { startQueueProcessor, stopQueueProcessor } from '@/services/push/notificationQueue.service';
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
   startReminderScheduler();
   startRecurringExpenseReminderScheduler();
   startPaymentDueReminderScheduler();
+  startDirectorApprovalReminderScheduler();
 
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
     stopReminderScheduler();
     stopRecurringExpenseReminderScheduler();
     stopPaymentDueReminderScheduler();
+    stopDirectorApprovalReminderScheduler();
     server.close(async () => {
       await disconnectDB();
       process.exit(0);

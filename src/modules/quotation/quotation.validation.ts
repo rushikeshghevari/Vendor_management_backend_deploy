@@ -48,6 +48,8 @@ const baseQuotationSchema = z.object({
   advanceAmount: z.coerce.number().min(0).optional(),
   // The vendor's own promised delivery date for this quotation.
   expectedDeliveryDate: z.coerce.date().optional(),
+  // When the department expects to raise the PO — the real deadline for advanceAmount above.
+  expectedPODate: z.coerce.date().optional(),
   priority: z.enum(QUOTATION_PRIORITIES).default('medium'),
   description: z.string().trim().max(2000).optional(),
   remarks: z.string().trim().max(1000).optional(),
@@ -67,6 +69,7 @@ export const createRequirementQuotationSchema = z
     creditPeriod: z.coerce.number().min(0, 'Credit period is required'),
     advanceAmount: z.coerce.number().min(0).optional(),
     expectedDeliveryDate: z.coerce.date().optional(),
+    expectedPODate: z.coerce.date().optional(),
     priority: z.enum(QUOTATION_PRIORITIES).default('medium'),
     description: z.string().trim().max(2000).optional(),
     remarks: z.string().trim().max(1000).optional(),

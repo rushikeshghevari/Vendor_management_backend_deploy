@@ -84,6 +84,9 @@ export const NOTIFICATION_TYPES = [
   // paymentDueReminder.service.ts. Covers both a confirmed Bill.dueDate and a tentative
   // RecurringExpense.nextDueDate (real invoice not generated yet).
   'payment_due_reminder',
+  // Nudges a Director who hasn't yet decided on a Requirement as its prepared quotation's
+  // expectedPODate approaches — see directorApprovalReminder.service.ts.
+  'director_approval_due_reminder',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
