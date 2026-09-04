@@ -55,6 +55,9 @@ router.get('/bills', validate({ query: externalBillListQuerySchema }), externalC
  *                       reference: { type: string, description: Bill code, recurring expense's title, or "requirementNumber — title" for a prepared quotation }
  *                       payee: { type: string }
  *                       amount: { type: number }
+ *                       advanceAmount: { type: number, description: "prepared_quotation only — how much of amount the vendor wants paid before the PO/goods (0 if none). May be a Director-overridden quotation's own advance, not necessarily the department's original pick." }
+ *                       balanceAmount: { type: number, description: "prepared_quotation only — amount minus advanceAmount, due per the quotation's own credit period once the PO is raised" }
+ *                       expectedDeliveryDate: { type: string, format: date-time, nullable: true, description: "prepared_quotation only — the vendor's own promised delivery date for this quotation, or null if never set" }
  *                       isTentative: { type: boolean, description: true for a recurring cycle or a prepared quotation, where the real invoice/approval doesn't exist yet }
  *                       dueDate: { type: string, format: date-time, description: For prepared_quotation this is the Requirement's requiredDate (goods needed by), not a real payment due date — no such date exists this early }
  *                       daysRemaining: { type: integer, description: Negative means overdue }

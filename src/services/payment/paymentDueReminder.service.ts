@@ -75,7 +75,7 @@ interface DirectorReviewApprovalEntryLike {
 interface DirectorReviewLike {
   decision: string;
   decisionDate?: Date;
-  selectedQuotation?: { amount?: number } | null;
+  selectedQuotation?: { amount?: number; advanceAmount?: number; expectedDeliveryDate?: Date } | null;
   approvals: DirectorReviewApprovalEntryLike[];
 }
 
@@ -83,6 +83,13 @@ export interface QuotationApprovalInfo {
   approvedAt: Date | null;
   approvalText: string;
   approvedAmount: number;
+  /** How much of `approvedAmount` the vendor wants paid before the PO/goods — 0 when the
+   *  quotation never set one. `approvedAmount - advanceAmount` is the balance, due per the
+   *  quotation's own `creditPeriod` once the approved amount is actually raised as a PO. */
+  advanceAmount: number;
+  /** The vendor's own promised delivery date, from whichever quotation actually got approved
+   *  (may differ from the department's original "prepared" pick if a Director overrode it). */
+  expectedDeliveryDate: Date | null;
 }
 
 /** A Requirement-linked Quotation (the normal Requirement → Quotation → Dual Director
@@ -100,7 +107,7 @@ export async function loadDirectorReviewsByRequirement(
   if (ids.length === 0) return new Map();
 
   const reviews = await DirectorReview.find({ requirement: { $in: ids } })
-    .populate('selectedQuotation', 'amount')
+    .populate('selectedQuotation', 'amount advanceAmount expectedDeliveryDate')
     .select('requirement decision decisionDate selectedQuotation approvals')
     .lean();
 
@@ -114,7 +121,16 @@ export async function loadDirectorReviewsByRequirement(
  * was never linked to a Requirement at all (no entry in `reviewMap` either way).
  */
 export function resolveQuotationApproval(
-  quotation: { requirement?: unknown; amount?: number; directorApprovals?: ApprovalLike[] } | null | undefined,
+  quotation:
+    | {
+        requirement?: unknown;
+        amount?: number;
+        advanceAmount?: number;
+        expectedDeliveryDate?: Date;
+        directorApprovals?: ApprovalLike[];
+      }
+    | null
+    | undefined,
   reviewMap: Map<string, DirectorReviewLike>,
 ): QuotationApprovalInfo {
   const requirementId = quotation?.requirement ? String(quotation.requirement) : undefined;
@@ -132,6 +148,12 @@ export function resolveQuotationApproval(
       approvedAt: fullyApproved && review.decisionDate ? new Date(review.decisionDate) : null,
       approvalText,
       approvedAmount: review.selectedQuotation?.amount ?? quotation?.amount ?? 0,
+      advanceAmount: review.selectedQuotation?.advanceAmount ?? quotation?.advanceAmount ?? 0,
+      expectedDeliveryDate: review.selectedQuotation?.expectedDeliveryDate
+        ? new Date(review.selectedQuotation.expectedDeliveryDate)
+        : quotation?.expectedDeliveryDate
+          ? new Date(quotation.expectedDeliveryDate)
+          : null,
     };
   }
 
@@ -139,6 +161,8 @@ export function resolveQuotationApproval(
     approvedAt: getFirstApprovalDate(quotation),
     approvalText: formatQuotationApprovals(quotation),
     approvedAmount: quotation?.amount ?? 0,
+    advanceAmount: quotation?.advanceAmount ?? 0,
+    expectedDeliveryDate: quotation?.expectedDeliveryDate ? new Date(quotation.expectedDeliveryDate) : null,
   };
 }
 

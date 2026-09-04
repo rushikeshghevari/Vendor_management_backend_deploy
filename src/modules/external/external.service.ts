@@ -189,13 +189,24 @@ export const externalService = {
       .map((req) => {
         const quotation = req.preparedQuotation as unknown as {
           amount: number;
+          advanceAmount?: number;
+          expectedDeliveryDate?: Date;
           status?: string;
           vendor?: { name?: string } | null;
           temporaryVendor?: { name?: string } | null;
         };
         // Keyed by the Requirement itself (not quotation.requirement) — same id, but this
         // avoids depending on that field having been populated onto preparedQuotation.
-        const approval = resolveQuotationApproval({ requirement: req._id, amount: quotation.amount }, reviewMap);
+        const approval = resolveQuotationApproval(
+          {
+            requirement: req._id,
+            amount: quotation.amount,
+            advanceAmount: quotation.advanceAmount,
+            expectedDeliveryDate: quotation.expectedDeliveryDate,
+          },
+          reviewMap,
+        );
+        const finalAmount = approval.approvedAt ? approval.approvedAmount : quotation.amount;
         return {
           id: String(req._id),
           type: 'prepared_quotation' as const,
@@ -204,7 +215,12 @@ export const externalService = {
           // The amount a Director actually approved (which may be a different quotation than
           // the department's own "prepared" pick, if a Director overrode it) once approved;
           // the prepared pick's own amount until then.
-          amount: approval.approvedAt ? approval.approvedAmount : quotation.amount,
+          amount: finalAmount,
+          // The vendor-dictated payment split — how much of `amount` is due before the PO/
+          // goods, and what's left for after (paid per the quotation's own credit period).
+          advanceAmount: approval.advanceAmount,
+          balanceAmount: Math.max(finalAmount - approval.advanceAmount, 0),
+          expectedDeliveryDate: approval.expectedDeliveryDate,
           isTentative: true,
           dueDate: req.requiredDate,
           daysRemaining: daysRemaining(req.requiredDate),

@@ -105,6 +105,15 @@ export interface IQuotation extends Document {
   // Compulsory here since it directly affects payment scheduling; carried onto the Bill too
   // (see Bill.creditPeriod), where it's editable in case the actual invoice differs.
   creditPeriod: number;
+  // Vendor-dictated payment split, set when the quotation is filled in — how much must be
+  // paid before the PO/goods (0 = nothing upfront). The rest (amount - advanceAmount) is due
+  // per `creditPeriod` above; a vendor demanding 100% upfront is just advanceAmount === amount,
+  // no separate flag needed.
+  advanceAmount?: number;
+  // The vendor's own promised delivery date for this quotation, set at quotation-fill time —
+  // distinct from `requiredDate` (when the requester needs it by) and from a PurchaseOrder's
+  // own dates (which don't exist yet at this stage).
+  expectedDeliveryDate?: Date;
   priority: QuotationPriority;
   description?: string;
   pdfFiles: IQuotationPdfVersion[];
@@ -229,6 +238,8 @@ const quotationSchema = new Schema<IQuotation>(
     paymentTerms: { type: String, required: true, trim: true },
     deliveryTerms: { type: String, required: true, trim: true },
     creditPeriod: { type: Number, required: true, min: 0 },
+    advanceAmount: { type: Number, min: 0 },
+    expectedDeliveryDate: { type: Date },
     priority: { type: String, enum: QUOTATION_PRIORITIES, default: 'medium' },
     description: { type: String, trim: true },
     // Never overwritten — every upload appends a new version; the last entry is the active one.

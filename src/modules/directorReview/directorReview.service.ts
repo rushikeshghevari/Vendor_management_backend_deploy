@@ -192,10 +192,24 @@ export const directorReviewService = {
     const review = await getOrCreateReview(requirementId, actor);
     const now = new Date();
 
-    // Top-level, last-writer-wins: only an Approve that actually supplies a selection
-    // overwrites it — an Approve without one (or a Reject/Send Back, blocked at the
-    // validation layer) leaves whatever was selected by an earlier round/Director untouched.
     if (input.decision === 'approved' && input.selectedQuotationId) {
+      // Once any Director has approved *this round* with a pick, every other Director must
+      // approve the same one — two Directors silently resolving a requirement toward two
+      // different quotations (last-writer-wins) was a real bug, not an intentional override.
+      // Only checked while the round is still active (an entry already `approved`); once a
+      // round resolves or is Sent Back, `approvals[]` resets to pending and the next round is
+      // free to pick again.
+      const roundHasApproval = review.approvals.some((entry) => entry.decision === 'approved');
+      if (
+        roundHasApproval &&
+        review.selectedQuotation &&
+        review.selectedQuotation.toString() !== input.selectedQuotationId
+      ) {
+        throw ApiError.badRequest(
+          'A different Director has already approved this requirement with another quotation selected — approve the same quotation, or Reject/Send Back to restart this round.',
+        );
+      }
+
       const selected = await Quotation.findOne({
         _id: input.selectedQuotationId,
         requirement: requirementId,
