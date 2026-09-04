@@ -7,6 +7,7 @@ import type { CreateDepartmentInput, TransferHodInput, UpdateDepartmentInput } f
 import { Bill } from '@/modules/bill/bill.model';
 import { PurchaseOrder } from '@/modules/purchaseOrder/purchaseOrder.model';
 import { Quotation } from '@/modules/quotation/quotation.model';
+import { Requirement } from '@/modules/requirement/requirement.model';
 import { User } from '@/modules/user/user.model';
 import { userService } from '@/modules/user/user.service';
 import { Vendor } from '@/modules/vendor/vendor.model';
@@ -14,14 +15,15 @@ import { ApiError } from '@/utils/ApiError';
 import { buildPaginationMeta, parsePagination } from '@/utils/pagination';
 
 async function getStatistics(departmentId: string) {
-  const [userCount, vendorCount, quotationCount, purchaseOrderCount, billCount] = await Promise.all([
+  const [userCount, vendorCount, requirementCount, quotationCount, purchaseOrderCount, billCount] = await Promise.all([
     User.countDocuments({ department: departmentId, role: ROLES.DEPARTMENT_USER }),
     Vendor.countDocuments({ department: departmentId }),
+    Requirement.countDocuments({ department: departmentId, isDeleted: { $ne: true } }),
     Quotation.countDocuments({ department: departmentId, isDeleted: { $ne: true } }),
     PurchaseOrder.countDocuments({ department: departmentId, isDeleted: { $ne: true } }),
     Bill.countDocuments({ department: departmentId, isDeleted: { $ne: true } }),
   ]);
-  return { userCount, vendorCount, quotationCount, purchaseOrderCount, billCount };
+  return { userCount, vendorCount, requirementCount, quotationCount, purchaseOrderCount, billCount };
 }
 
 // UTC-anchored deliberately: Mongo's $dateToString below groups createdAt by UTC calendar
