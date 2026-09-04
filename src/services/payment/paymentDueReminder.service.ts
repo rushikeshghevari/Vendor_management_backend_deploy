@@ -16,9 +16,12 @@
  * tomorrow's tick still sends a fresh one for as long as the payment remains outstanding.
  */
 
+import { Types } from 'mongoose';
+
 import { ROLES } from '@/constants/roles';
 import { BILL_STATUS } from '@/constants/status';
 import { Bill } from '@/modules/bill/bill.model';
+import { DirectorReview } from '@/modules/directorReview/directorReview.model';
 import { notificationService } from '@/modules/notification/notification.service';
 import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
 
@@ -63,6 +66,82 @@ export function getFirstApprovalDate(
   return approved ? new Date(approved.decidedAt) : null;
 }
 
+interface DirectorReviewApprovalEntryLike {
+  directorName: string;
+  decision: string;
+  decidedAt?: Date;
+}
+
+interface DirectorReviewLike {
+  decision: string;
+  decisionDate?: Date;
+  selectedQuotation?: { amount?: number } | null;
+  approvals: DirectorReviewApprovalEntryLike[];
+}
+
+export interface QuotationApprovalInfo {
+  approvedAt: Date | null;
+  approvalText: string;
+  approvedAmount: number;
+}
+
+/** A Requirement-linked Quotation (the normal Requirement → Quotation → Dual Director
+ *  Approval flow) never gets its own `directorApprovals[]` populated — that field only fills
+ *  in for the separate standalone-quotation approval path (CEO/Director amount-based routing
+ *  for quotations with no `requirement`). The real dual-approval record for a Requirement-
+ *  linked quotation lives on its `DirectorReview` document instead, keyed by `requirement`.
+ *  Batch-loads every review needed for a page of results in one query, so a consumer never
+ *  fires one query per quotation. */
+export async function loadDirectorReviewsByRequirement(
+  requirementIds: Array<unknown>,
+): Promise<Map<string, DirectorReviewLike>> {
+  const ids = [...new Set(requirementIds.filter(Boolean).map((id) => String(id)))]
+    .filter((id) => Types.ObjectId.isValid(id));
+  if (ids.length === 0) return new Map();
+
+  const reviews = await DirectorReview.find({ requirement: { $in: ids } })
+    .populate('selectedQuotation', 'amount')
+    .select('requirement decision decisionDate selectedQuotation approvals')
+    .lean();
+
+  return new Map(reviews.map((r) => [String(r.requirement), r as unknown as DirectorReviewLike]));
+}
+
+/**
+ * Resolves approval date/text/amount for one quotation, preferring its Requirement's
+ * DirectorReview record (the real source of truth for a Requirement-linked quotation) and
+ * falling back to the quotation's own `directorApprovals[]` for a standalone quotation that
+ * was never linked to a Requirement at all (no entry in `reviewMap` either way).
+ */
+export function resolveQuotationApproval(
+  quotation: { requirement?: unknown; amount?: number; directorApprovals?: ApprovalLike[] } | null | undefined,
+  reviewMap: Map<string, DirectorReviewLike>,
+): QuotationApprovalInfo {
+  const requirementId = quotation?.requirement ? String(quotation.requirement) : undefined;
+  const review = requirementId ? reviewMap.get(requirementId) : undefined;
+
+  if (review) {
+    const approvedEntries = review.approvals.filter((a) => a.decision === 'approved');
+    const approvalText = approvedEntries.length
+      ? approvedEntries.map((a) => `${a.directorName} (${a.decidedAt ? new Date(a.decidedAt).toLocaleDateString('en-IN') : 'date unknown'})`).join(', ')
+      : 'no Director approval on record';
+    // Only a fully-approved review (every Director, not just one so far) counts as "approved"
+    // — matches Requirement.status only becoming APPROVED once every entry is.
+    const fullyApproved = review.decision === 'approved';
+    return {
+      approvedAt: fullyApproved && review.decisionDate ? new Date(review.decisionDate) : null,
+      approvalText,
+      approvedAmount: review.selectedQuotation?.amount ?? quotation?.amount ?? 0,
+    };
+  }
+
+  return {
+    approvedAt: getFirstApprovalDate(quotation),
+    approvalText: formatQuotationApprovals(quotation),
+    approvedAmount: quotation?.amount ?? 0,
+  };
+}
+
 async function notifyBillsDue(now: Date): Promise<void> {
   const paymentTeam = await notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT);
   if (paymentTeam.length === 0) return;
@@ -78,6 +157,10 @@ async function notifyBillsDue(now: Date): Promise<void> {
     .populate({ path: 'quotation', populate: { path: 'directorApprovals.director', select: 'name' } })
     .lean();
 
+  const reviewMap = await loadDirectorReviewsByRequirement(
+    bills.map((bill) => (bill.quotation as unknown as { requirement?: unknown } | null)?.requirement),
+  );
+
   const today = now.toISOString().slice(0, 10);
 
   for (const bill of bills) {
@@ -85,7 +168,10 @@ async function notifyBillsDue(now: Date): Promise<void> {
     const reimbursedTo = bill.reimbursedTo as unknown as { name?: string } | null;
     const payee = vendor?.name ?? reimbursedTo?.name ?? 'Unknown';
     const days = daysRemaining(bill.dueDate, now);
-    const approvalsText = formatQuotationApprovals(bill.quotation as unknown as { directorApprovals?: ApprovalLike[] });
+    const approvalsText = resolveQuotationApproval(
+      bill.quotation as unknown as { requirement?: unknown; amount?: number; directorApprovals?: ApprovalLike[] },
+      reviewMap,
+    ).approvalText;
 
     await notificationService
       .notifyUsers(paymentTeam, {

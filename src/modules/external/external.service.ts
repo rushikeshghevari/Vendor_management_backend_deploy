@@ -1,7 +1,7 @@
 import { BILL_STATUS, QUOTATION_STATUS } from '@/constants/status';
 import { Bill } from '@/modules/bill/bill.model';
 import type { ExternalBillListQuery, ExternalUpcomingPaymentsQuery } from '@/modules/external/external.validation';
-import { formatQuotationApprovals, getFirstApprovalDate } from '@/services/payment/paymentDueReminder.service';
+import { loadDirectorReviewsByRequirement, resolveQuotationApproval } from '@/services/payment/paymentDueReminder.service';
 import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
 import { Requirement } from '@/modules/requirement/requirement.model';
 import { buildPaginationMeta, parsePagination } from '@/utils/pagination';
@@ -123,9 +123,24 @@ export const externalService = {
     const dayMs = 24 * 60 * 60 * 1000;
     const daysRemaining = (date: Date) => Math.ceil((date.getTime() - now.getTime()) / dayMs);
 
+    // Requirement-linked quotations (the normal Requirement → Quotation → Dual Director
+    // Approval flow) never populate their own `directorApprovals[]` — the real approval record
+    // lives on a separate DirectorReview document keyed by `requirement`. Batch-load every
+    // review this page could need in one query (see resolveQuotationApproval).
+    type QuotationRequirementRef = { requirement?: unknown } | null | undefined;
+    const reviewMap = await loadDirectorReviewsByRequirement([
+      ...bills.map((bill) => (bill.quotation as unknown as QuotationRequirementRef)?.requirement),
+      ...series.map((item) => (item.originQuotation as unknown as QuotationRequirementRef)?.requirement),
+      ...requirements.map((req) => req._id),
+    ]);
+
     const billItems = bills.map((bill) => {
       const vendor = bill.vendor as unknown as { name?: string } | null;
       const reimbursedTo = bill.reimbursedTo as unknown as { name?: string } | null;
+      const approval = resolveQuotationApproval(
+        bill.quotation as unknown as Parameters<typeof resolveQuotationApproval>[0],
+        reviewMap,
+      );
       return {
         id: String(bill._id),
         type: 'bill' as const,
@@ -136,14 +151,18 @@ export const externalService = {
         dueDate: bill.dueDate,
         daysRemaining: daysRemaining(bill.dueDate),
         status: bill.status,
-        quotationApproval: formatQuotationApprovals(bill.quotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
-        approvedAt: getFirstApprovalDate(bill.quotation as unknown as Parameters<typeof getFirstApprovalDate>[0]),
+        quotationApproval: approval.approvalText,
+        approvedAt: approval.approvedAt,
       };
     });
 
     const recurringItems = series.map((item) => {
       const vendor = item.vendor as unknown as { name?: string } | null;
       const reimbursedTo = item.reimbursedTo as unknown as { name?: string } | null;
+      const approval = resolveQuotationApproval(
+        item.originQuotation as unknown as Parameters<typeof resolveQuotationApproval>[0],
+        reviewMap,
+      );
       return {
         id: String(item._id),
         type: 'recurring_expense' as const,
@@ -154,8 +173,8 @@ export const externalService = {
         dueDate: item.nextDueDate,
         daysRemaining: daysRemaining(item.nextDueDate),
         status: 'upcoming',
-        quotationApproval: formatQuotationApprovals(item.originQuotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
-        approvedAt: getFirstApprovalDate(item.originQuotation as unknown as Parameters<typeof getFirstApprovalDate>[0]),
+        quotationApproval: approval.approvalText,
+        approvedAt: approval.approvedAt,
       };
     });
 
@@ -174,24 +193,30 @@ export const externalService = {
           vendor?: { name?: string } | null;
           temporaryVendor?: { name?: string } | null;
         };
-        const approvedAt = getFirstApprovalDate(req.preparedQuotation as unknown as Parameters<typeof getFirstApprovalDate>[0]);
+        // Keyed by the Requirement itself (not quotation.requirement) — same id, but this
+        // avoids depending on that field having been populated onto preparedQuotation.
+        const approval = resolveQuotationApproval({ requirement: req._id, amount: quotation.amount }, reviewMap);
         return {
           id: String(req._id),
           type: 'prepared_quotation' as const,
           reference: `${req.requirementNumber} - ${req.title}`,
           payee: quotation.vendor?.name ?? quotation.temporaryVendor?.name ?? 'Unknown',
-          amount: quotation.amount,
+          // The amount a Director actually approved (which may be a different quotation than
+          // the department's own "prepared" pick, if a Director overrode it) once approved;
+          // the prepared pick's own amount until then.
+          amount: approval.approvedAt ? approval.approvedAmount : quotation.amount,
           isTentative: true,
           dueDate: req.requiredDate,
           daysRemaining: daysRemaining(req.requiredDate),
-          // Reflects the quotation's real, live status — flips from pending to approved the
-          // moment a Director decides, with no separate update step (see approvedAt below).
-          status: approvedAt ? 'prepared_approved' : 'prepared_pending_approval',
-          quotationApproval: formatQuotationApprovals(req.preparedQuotation as unknown as Parameters<typeof formatQuotationApprovals>[0]),
+          // Reflects the Requirement's real, live Dual Director Approval status — flips from
+          // pending to approved only once EVERY Director has approved, with no separate
+          // update step (see approvedAt below).
+          status: approval.approvedAt ? 'prepared_approved' : 'prepared_pending_approval',
+          quotationApproval: approval.approvalText,
           // Two distinct events, often days apart: when the department picked this quotation,
-          // and when a Director actually approved it (null until that happens).
+          // and when every Director actually approved it (null until that happens).
           preparedAt: req.preparedQuotationAt ?? null,
-          approvedAt,
+          approvedAt: approval.approvedAt,
         };
       });
 
