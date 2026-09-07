@@ -5,6 +5,14 @@ import { OCR_STATUS, QUOTATION_STATUS, type OcrStatus, type QuotationStatus } fr
 export const QUOTATION_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
 export type QuotationPriority = (typeof QUOTATION_PRIORITIES)[number];
 
+/** Marks a throwaway record the AI/OCR quotation flow creates so it has something to run OCR
+ *  against (see CreateRequirementQuotationScreen.tsx's onAiPreviewSubmit). Meant to be deleted
+ *  the moment the user finishes reviewing and submits the real quotation, but that delete is
+ *  best-effort — if the user backs out mid-flow, or the delete call itself fails, this record
+ *  is left behind. Filtered out of every quotation list/count query so a stray one never shows
+ *  up to a user, regardless of whether the delete succeeded. */
+export const AI_PLACEHOLDER_VENDOR_NAME = 'Vendor (pending AI review)';
+
 export const QUOTATION_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP'] as const;
 export type QuotationCurrency = (typeof QUOTATION_CURRENCIES)[number];
 

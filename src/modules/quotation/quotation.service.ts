@@ -4,7 +4,7 @@ import { Bill } from '@/modules/bill/bill.model';
 import { Department } from '@/modules/department/department.model';
 import { notificationService } from '@/modules/notification/notification.service';
 import { PurchaseOrder } from '@/modules/purchaseOrder/purchaseOrder.model';
-import { Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
+import { AI_PLACEHOLDER_VENDOR_NAME, Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
 import type {
   CreateQuotationInput,
   CreateRequirementQuotationInput,
@@ -446,7 +446,12 @@ export const quotationService = {
 
   async list(query: Record<string, unknown>, actor: Actor) {
     const pagination = parsePagination(query);
-    const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
+    // Excludes stray AI/OCR placeholder records (see AI_PLACEHOLDER_VENDOR_NAME) that a
+    // failed/skipped cleanup left behind — never a real quotation, so never worth showing.
+    const filter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      'temporaryVendor.name': { $ne: AI_PLACEHOLDER_VENDOR_NAME },
+    };
 
     if (query.status) filter.status = query.status;
     if (query.department) filter.department = query.department;

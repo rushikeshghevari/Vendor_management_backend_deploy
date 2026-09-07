@@ -8,7 +8,7 @@ import {
   type IDirectorReview,
 } from '@/modules/directorReview/directorReview.model';
 import type { DecisionInput } from '@/modules/directorReview/directorReview.validation';
-import { Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
+import { AI_PLACEHOLDER_VENDOR_NAME, Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
 import { Requirement, type IRequirement } from '@/modules/requirement/requirement.model';
 import { User } from '@/modules/user/user.model';
 import type { Actor } from '@/types/actor';
@@ -121,7 +121,11 @@ export const directorReviewService = {
 
     const comparison = await latestComparisonOrNull(requirementId);
 
-    const quotations = await Quotation.find({ requirement: requirementId, isDeleted: { $ne: true } })
+    const quotations = await Quotation.find({
+      requirement: requirementId,
+      isDeleted: { $ne: true },
+      'temporaryVendor.name': { $ne: AI_PLACEHOLDER_VENDOR_NAME },
+    })
       .populate('vendor', 'name')
       .sort({ createdAt: -1 });
 

@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { ROLES } from '@/constants/roles';
 import { REQUIREMENT_STATUS } from '@/constants/status';
 import { Department } from '@/modules/department/department.model';
-import { Quotation } from '@/modules/quotation/quotation.model';
+import { AI_PLACEHOLDER_VENDOR_NAME, Quotation } from '@/modules/quotation/quotation.model';
 import { Requirement } from '@/modules/requirement/requirement.model';
 import type { CreateRequirementInput, SetPreparedQuotationInput, UpdateRequirementInput } from '@/modules/requirement/requirement.validation';
 import type { Actor } from '@/types/actor';
@@ -198,7 +198,13 @@ export const requirementService = {
     // One grouped query for the whole page rather than a per-item count — stays bounded by
     // `pagination.limit` (same page size as the `items` query above), never N+1.
     const quotationCounts = await Quotation.aggregate<{ _id: Types.ObjectId; count: number }>([
-      { $match: { requirement: { $in: items.map((item) => item._id) }, isDeleted: { $ne: true } } },
+      {
+        $match: {
+          requirement: { $in: items.map((item) => item._id) },
+          isDeleted: { $ne: true },
+          'temporaryVendor.name': { $ne: AI_PLACEHOLDER_VENDOR_NAME },
+        },
+      },
       { $group: { _id: '$requirement', count: { $sum: 1 } } },
     ]);
     const countByRequirement = new Map(quotationCounts.map((entry) => [entry._id.toString(), entry.count]));
@@ -299,7 +305,11 @@ export const requirementService = {
       throw ApiError.notFound('Requirement not found, or it is not currently collecting quotations');
     }
 
-    const hasQuotation = await Quotation.exists({ requirement: id, isDeleted: { $ne: true } });
+    const hasQuotation = await Quotation.exists({
+      requirement: id,
+      isDeleted: { $ne: true },
+      'temporaryVendor.name': { $ne: AI_PLACEHOLDER_VENDOR_NAME },
+    });
     if (!hasQuotation) {
       throw ApiError.badRequest('Add at least one quotation before submitting to the Director');
     }

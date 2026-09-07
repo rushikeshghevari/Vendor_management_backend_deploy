@@ -2,7 +2,7 @@ import { ROLES } from '@/constants/roles';
 import { REQUIREMENT_STATUS } from '@/constants/status';
 import { Comparison, type IComparison } from '@/modules/comparison/comparison.model';
 import { compare, type QuotationInput, type RequirementInput } from '@/modules/comparison/comparisonEngine';
-import { Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
+import { AI_PLACEHOLDER_VENDOR_NAME, Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
 import { Requirement, type IRequirement } from '@/modules/requirement/requirement.model';
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
@@ -96,7 +96,11 @@ export const comparisonService = {
       throw ApiError.badRequest('AI Comparison is read-only once a decision has been made on this requirement');
     }
 
-    const quotations = await Quotation.find({ requirement: requirementId, isDeleted: { $ne: true } })
+    const quotations = await Quotation.find({
+      requirement: requirementId,
+      isDeleted: { $ne: true },
+      'temporaryVendor.name': { $ne: AI_PLACEHOLDER_VENDOR_NAME },
+    })
       .populate('vendor', 'name');
     if (quotations.length === 0) {
       throw ApiError.badRequest('Add at least one quotation before generating a comparison');
