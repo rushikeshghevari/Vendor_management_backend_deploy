@@ -107,13 +107,13 @@ router.get(
  *       200: { description: Vendor linked; requirement advanced to vendor_finalized }
  *       400: { description: Requirement is not Director-approved, or vendorId does not refer to an existing vendor }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  *       404: { description: Requirement not found }
  *       409: { description: A vendor was already registered/linked for this requirement }
  */
 router.post(
   '/:id/vendor-registration/link-existing',
-  authorize(ROLES.DEPARTMENT_USER, ROLES.SUPER_ADMIN),
+  authorize(ROLES.DEPARTMENT_USER, ROLES.HOD, ROLES.SUPER_ADMIN),
   validate({ params: mongoIdParamSchema(), body: linkExistingVendorSchema }),
   vendorRegistrationController.linkExistingVendor,
 );
@@ -167,13 +167,13 @@ router.post(
  *       201: { description: Vendor registered; requirement advanced to vendor_finalized }
  *       400: { description: Requirement is not Director-approved, has no comparison, or validation failed }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  *       404: { description: Requirement not found }
  *       409: { description: A vendor was already registered for this requirement, or a duplicate GST/PAN/email exists }
  */
 router.post(
   '/:id/vendor-registration',
-  authorize(ROLES.DEPARTMENT_USER, ROLES.SUPER_ADMIN),
+  authorize(ROLES.DEPARTMENT_USER, ROLES.HOD, ROLES.SUPER_ADMIN),
   validate({ params: mongoIdParamSchema() }),
   uploadVendorDocuments,
   validate({ body: registerVendorSchema }),

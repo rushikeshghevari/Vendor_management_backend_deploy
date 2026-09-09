@@ -9,10 +9,13 @@ import type { RegisterVendorInput } from '@/modules/vendorRegistration/vendorReg
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
 
-/** Only a Department User (their own requirement) or Super Admin may actually register a
- *  vendor — matches Phase 6's role table exactly ("Manual vendor creation must not be
- *  allowed" for everyone else; HOD/Director are read-only, enforced in the routes layer). */
-const REGISTER_ROLES: Array<(typeof ROLES)[keyof typeof ROLES]> = [ROLES.DEPARTMENT_USER, ROLES.SUPER_ADMIN];
+/** A Department User (their own/routed-in requirement), HOD, or Super Admin may register a
+ *  vendor. Originally Department User/Super Admin only (Phase 6's role table), but HOD can
+ *  already generate and verify the public vendor-registration link (see LINK_ROLES in
+ *  vendorRegistrationLink.routes.ts) — being unable to then register/link the vendor
+ *  themselves was an inconsistent dead end for whoever actually sent that link. Director
+ *  remains read-only, enforced in the routes layer. */
+const REGISTER_ROLES: Array<(typeof ROLES)[keyof typeof ROLES]> = [ROLES.DEPARTMENT_USER, ROLES.HOD, ROLES.SUPER_ADMIN];
 
 const CORE_DOCUMENT_TYPES = ['gst_certificate', 'pan_card', 'cancelled_cheque'] as const;
 
