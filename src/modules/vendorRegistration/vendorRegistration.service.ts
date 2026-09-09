@@ -16,12 +16,23 @@ const REGISTER_ROLES: Array<(typeof ROLES)[keyof typeof ROLES]> = [ROLES.DEPARTM
 
 const CORE_DOCUMENT_TYPES = ['gst_certificate', 'pan_card', 'cancelled_cheque'] as const;
 
-/** Same read-visibility rule used by every other Requirement-scoped module in this codebase
- *  (requirement/comparison/directorReview each keep their own local copy). */
+/** Matches a requirement currently sitting in `actor.department` that was routed in from a
+ *  *different* department — see the identical helper in requirement.service.ts, which this
+ *  is kept in sync with. */
+function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
+  return { department: actor.department, requestedByDepartment: { $ne: actor.department } };
+}
+
+/** Same read-visibility rule as `requirementService`'s own `scopeToOwner` — kept in sync with
+ *  it by hand (every other Requirement-scoped module in this codebase keeps its own local
+ *  copy). Was previously `createdBy`-only for a Department User, missing the routed-in case
+ *  requirementService itself already handles — a Department User in the *receiving*
+ *  department of a routed requirement couldn't check/confirm its vendor registration at all,
+ *  a dead end once that requirement reached Approved. */
 function scopeToRequirement(actor: Actor, requirementId: string): Record<string, unknown> {
   const filter: Record<string, unknown> = { _id: requirementId, isDeleted: { $ne: true } };
   if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
+    filter.$or = [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)];
   } else if (actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }

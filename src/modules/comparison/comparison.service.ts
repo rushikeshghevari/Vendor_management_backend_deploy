@@ -7,14 +7,22 @@ import { Requirement, type IRequirement } from '@/modules/requirement/requiremen
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
 
+/** Matches a requirement currently sitting in `actor.department` that was routed in from a
+ *  *different* department — see the identical helper in requirement.service.ts, which this
+ *  is kept in sync with. */
+function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
+  return { department: actor.department, requestedByDepartment: { $ne: actor.department } };
+}
+
 /** Same read-visibility rule as `requirementService`'s own `scopeToOwner` (duplicated here
  *  rather than imported — this codebase keeps each module's scoping filter local, e.g.
- *  `quotation.service.ts` has its own distinct copy too). Department User sees only their own
- *  requirement's comparison; HOD sees their department's; Director/Super Admin see any. */
+ *  `quotation.service.ts` has its own distinct copy too). Department User sees their own
+ *  requirement's comparison, plus one routed into their department from elsewhere; HOD sees
+ *  their department's; Director/Super Admin see any. */
 function scopeToRequirement(actor: Actor, requirementId: string): Record<string, unknown> {
   const filter: Record<string, unknown> = { _id: requirementId, isDeleted: { $ne: true } };
   if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
+    filter.$or = [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)];
   } else if (actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }

@@ -22,14 +22,22 @@ const REVIEW_ROLES: Array<(typeof ROLES)[keyof typeof ROLES]> = [ROLES.DIRECTOR,
 // docs/WORKFLOW_ENHANCEMENT_DIRECTOR_SUBMISSION.md.
 const STATUSES_ELIGIBLE_FOR_REVIEW = [REQUIREMENT_STATUS.QUOTATION_COMPARISON];
 
+/** Matches a requirement currently sitting in `actor.department` that was routed in from a
+ *  *different* department — see the identical helper in requirement.service.ts, which this
+ *  is kept in sync with. */
+function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
+  return { department: actor.department, requestedByDepartment: { $ne: actor.department } };
+}
+
 /** Same read-visibility rule used by `requirementService`/`comparisonService` (each module
  *  keeps its own local copy rather than sharing one — established precedent in this
- *  codebase). Department User sees only their own requirement; HOD sees their department's;
- *  Director/Super Admin see any — "read only" for the first two, full access for the rest. */
+ *  codebase). Department User sees their own requirement, plus one routed into their
+ *  department from elsewhere; HOD sees their department's; Director/Super Admin see any —
+ *  "read only" for the first two, full access for the rest. */
 function scopeToRequirement(actor: Actor, requirementId: string): Record<string, unknown> {
   const filter: Record<string, unknown> = { _id: requirementId, isDeleted: { $ne: true } };
   if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
+    filter.$or = [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)];
   } else if (actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }
