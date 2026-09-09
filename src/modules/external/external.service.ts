@@ -192,6 +192,7 @@ export const externalService = {
           advanceAmount?: number;
           expectedDeliveryDate?: Date;
           expectedPODate?: Date;
+          purchaseDate?: Date;
           status?: string;
           vendor?: { name?: string } | null;
           temporaryVendor?: { name?: string } | null;
@@ -205,6 +206,7 @@ export const externalService = {
             advanceAmount: quotation.advanceAmount,
             expectedDeliveryDate: quotation.expectedDeliveryDate,
             expectedPODate: quotation.expectedPODate,
+            purchaseDate: quotation.purchaseDate,
           },
           reviewMap,
         );
@@ -230,6 +232,10 @@ export const externalService = {
           // The real deadline for `advanceAmount` above — the department's own planned PO-raise
           // date, since a vendor typically won't confirm the order until the advance lands.
           advanceDueDate: approval.expectedPODate,
+          // The department's own planned purchase date — set regardless of whether an advance
+          // is involved (unlike advanceDueDate above), so this is the one date field a Payment
+          // Department consumer can rely on for every prepared quotation.
+          purchaseDate: approval.purchaseDate,
           expectedDeliveryDate: approval.expectedDeliveryDate,
           isTentative: true,
           dueDate,

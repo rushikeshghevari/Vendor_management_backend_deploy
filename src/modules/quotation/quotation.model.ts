@@ -127,6 +127,11 @@ export interface IQuotation extends Document {
   // until the advance is paid. Distinct from `expectedDeliveryDate` (when goods arrive, which
   // is naturally later) and from a PurchaseOrder's own `poDate` (doesn't exist yet here).
   expectedPODate?: Date;
+  // The department's own planned purchase date, independent of `expectedPODate` — that field
+  // only applies (and, in practice, was only ever filled in) when this quotation carries an
+  // advance. `purchaseDate` is meant to be set on every quotation, advance or not, so it's the
+  // one date external Payment Department consumers can rely on regardless of payment terms.
+  purchaseDate?: Date;
   priority: QuotationPriority;
   description?: string;
   pdfFiles: IQuotationPdfVersion[];
@@ -254,6 +259,7 @@ const quotationSchema = new Schema<IQuotation>(
     advanceAmount: { type: Number, min: 0 },
     expectedDeliveryDate: { type: Date },
     expectedPODate: { type: Date },
+    purchaseDate: { type: Date },
     priority: { type: String, enum: QUOTATION_PRIORITIES, default: 'medium' },
     description: { type: String, trim: true },
     // Never overwritten — every upload appends a new version; the last entry is the active one.

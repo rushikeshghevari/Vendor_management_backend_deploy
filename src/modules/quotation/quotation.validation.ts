@@ -50,6 +50,9 @@ const baseQuotationSchema = z.object({
   expectedDeliveryDate: z.coerce.date().optional(),
   // When the department expects to raise the PO — the real deadline for advanceAmount above.
   expectedPODate: z.coerce.date().optional(),
+  // The department's own planned purchase date — independent of expectedPODate, which only
+  // applies when this quotation carries an advance.
+  purchaseDate: z.coerce.date().optional(),
   priority: z.enum(QUOTATION_PRIORITIES).default('medium'),
   description: z.string().trim().max(2000).optional(),
   remarks: z.string().trim().max(1000).optional(),
@@ -70,6 +73,7 @@ export const createRequirementQuotationSchema = z
     advanceAmount: z.coerce.number().min(0).optional(),
     expectedDeliveryDate: z.coerce.date().optional(),
     expectedPODate: z.coerce.date().optional(),
+    purchaseDate: z.coerce.date().optional(),
     priority: z.enum(QUOTATION_PRIORITIES).default('medium'),
     description: z.string().trim().max(2000).optional(),
     remarks: z.string().trim().max(1000).optional(),

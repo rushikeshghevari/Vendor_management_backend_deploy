@@ -75,7 +75,13 @@ interface DirectorReviewApprovalEntryLike {
 interface DirectorReviewLike {
   decision: string;
   decisionDate?: Date;
-  selectedQuotation?: { amount?: number; advanceAmount?: number; expectedDeliveryDate?: Date; expectedPODate?: Date } | null;
+  selectedQuotation?: {
+    amount?: number;
+    advanceAmount?: number;
+    expectedDeliveryDate?: Date;
+    expectedPODate?: Date;
+    purchaseDate?: Date;
+  } | null;
   approvals: DirectorReviewApprovalEntryLike[];
 }
 
@@ -92,6 +98,9 @@ export interface QuotationApprovalInfo {
   expectedDeliveryDate: Date | null;
   /** When the department expects to raise the PO — the real deadline for `advanceAmount`. */
   expectedPODate: Date | null;
+  /** The department's own planned purchase date — set regardless of whether an advance is
+   *  involved, unlike `expectedPODate` (which only applies alongside one). */
+  purchaseDate: Date | null;
 }
 
 /** A Requirement-linked Quotation (the normal Requirement → Quotation → Dual Director
@@ -109,7 +118,7 @@ export async function loadDirectorReviewsByRequirement(
   if (ids.length === 0) return new Map();
 
   const reviews = await DirectorReview.find({ requirement: { $in: ids } })
-    .populate('selectedQuotation', 'amount advanceAmount expectedDeliveryDate expectedPODate')
+    .populate('selectedQuotation', 'amount advanceAmount expectedDeliveryDate expectedPODate purchaseDate')
     .select('requirement decision decisionDate selectedQuotation approvals')
     .lean();
 
@@ -130,6 +139,7 @@ export function resolveQuotationApproval(
         advanceAmount?: number;
         expectedDeliveryDate?: Date;
         expectedPODate?: Date;
+        purchaseDate?: Date;
         directorApprovals?: ApprovalLike[];
       }
     | null
@@ -162,6 +172,11 @@ export function resolveQuotationApproval(
         : quotation?.expectedPODate
           ? new Date(quotation.expectedPODate)
           : null,
+      purchaseDate: review.selectedQuotation?.purchaseDate
+        ? new Date(review.selectedQuotation.purchaseDate)
+        : quotation?.purchaseDate
+          ? new Date(quotation.purchaseDate)
+          : null,
     };
   }
 
@@ -172,6 +187,7 @@ export function resolveQuotationApproval(
     advanceAmount: quotation?.advanceAmount ?? 0,
     expectedDeliveryDate: quotation?.expectedDeliveryDate ? new Date(quotation.expectedDeliveryDate) : null,
     expectedPODate: quotation?.expectedPODate ? new Date(quotation.expectedPODate) : null,
+    purchaseDate: quotation?.purchaseDate ? new Date(quotation.purchaseDate) : null,
   };
 }
 
