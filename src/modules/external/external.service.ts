@@ -90,7 +90,7 @@ export const externalService = {
     const now = new Date();
     const cutoff = addDays(now, query.withinDays);
 
-    const [bills, series, requirements] = await Promise.all([
+    const [bills, series, requirements, billedRequirementIds] = await Promise.all([
       Bill.find({
         status: { $in: [BILL_STATUS.VERIFIED, BILL_STATUS.PAYMENT_PENDING] },
         isDeleted: { $ne: true },
@@ -118,7 +118,13 @@ export const externalService = {
           ],
         })
         .lean(),
+      // A Requirement-linked quotation never reaches QUOTATION_STATUS.BILLED (see the
+      // "stays at DRAFT for its whole lifecycle" comment in bill.service.ts's create()) — so
+      // checking preparedQuotation.status below can never detect that a real Bill already
+      // exists for this requirement. Check Bill.requirement directly instead.
+      Bill.find({ requirement: { $exists: true, $ne: null }, isDeleted: { $ne: true } }).distinct('requirement'),
     ]);
+    const billedRequirementIdSet = new Set(billedRequirementIds.map((id) => String(id)));
 
     const dayMs = 24 * 60 * 60 * 1000;
     const daysRemaining = (date: Date) => Math.ceil((date.getTime() - now.getTime()) / dayMs);
@@ -178,13 +184,18 @@ export const externalService = {
       };
     });
 
-    // Excludes a prepared quotation that already turned into a real Bill (billed) or that a
-    // Director rejected — both are stale signals once the Bill/RecurringExpense tiers above
-    // already cover (or definitively won't cover) the same spend.
+    // Excludes a prepared quotation that already turned into a real Bill or that a Director
+    // rejected — both are stale signals once the Bill/RecurringExpense tiers above already
+    // cover (or definitively won't cover) the same spend. `billedRequirementIdSet` (not
+    // quotation.status — see the query above) is what actually detects the Bill case.
     const preparedItems = requirements
       .filter((req) => {
         const quotation = req.preparedQuotation as unknown as { status?: string } | null;
-        return quotation && quotation.status !== QUOTATION_STATUS.BILLED && quotation.status !== QUOTATION_STATUS.REJECTED;
+        return (
+          quotation &&
+          quotation.status !== QUOTATION_STATUS.REJECTED &&
+          !billedRequirementIdSet.has(String(req._id))
+        );
       })
       .map((req) => {
         const quotation = req.preparedQuotation as unknown as {
