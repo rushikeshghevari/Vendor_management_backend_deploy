@@ -12,15 +12,16 @@ import { nextSequence, seedSequenceFromExisting } from '@/utils/sequence.model';
 const VENDOR_WRITE_ROLES: Role[] = [ROLES.DEPARTMENT_USER, ROLES.HOD];
 
 /**
- * Vendor visibility is per-creator for a Department User — they see and manage only the
- * vendors they personally registered, not every vendor in their department. An HOD, by
- * contrast, oversees the whole department and sees every vendor in it regardless of who
- * registered it. Super Admin (and any other role) is left unscoped.
+ * Vendor visibility is department-wide for both a Department User and an HOD — a vendor
+ * registered by anyone in the department (a teammate, the HOD, or via the self-registration
+ * link a Director verified) is relevant to the whole department, not just whoever happened to
+ * click Register. Previously a Department User was scoped to `createdBy: actor.id` only,
+ * which hid every vendor a colleague or the HOD registered — including ones from the public
+ * vendor registration link, since `verify()` records the verifying user as `createdBy`, not
+ * the original requester. Super Admin (and any other role) is left unscoped.
  */
 function scopeToOwner(actor: Actor, filter: Record<string, unknown>) {
-  if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
-  } else if (actor.role === ROLES.HOD) {
+  if (actor.role === ROLES.DEPARTMENT_USER || actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }
 }
