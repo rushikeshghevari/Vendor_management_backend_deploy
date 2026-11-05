@@ -14,12 +14,19 @@ import { ApiError } from '@/utils/ApiError';
 const LINK_ROLES: Array<(typeof ROLES)[keyof typeof ROLES]> = [ROLES.DEPARTMENT_USER, ROLES.HOD, ROLES.SUPER_ADMIN];
 const LINK_TTL_DAYS = 7;
 
+/** Matches a requirement currently sitting in `actor.department` that was routed in from a
+ *  *different* department (see requirement.service.ts's own copy of this same helper — each
+ *  Requirement-scoped module keeps a local one per this codebase's convention). */
+function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
+  return { department: actor.department, requestedByDepartment: { $ne: actor.department } };
+}
+
 /** Same read-visibility rule used by vendorRegistration.service.ts and every other
  *  Requirement-scoped module (each keeps its own local copy — established precedent). */
 function scopeToRequirement(actor: Actor, requirementId: string): Record<string, unknown> {
   const filter: Record<string, unknown> = { _id: requirementId, isDeleted: { $ne: true } };
   if (actor.role === ROLES.DEPARTMENT_USER) {
-    filter.createdBy = actor.id;
+    filter.$or = [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)];
   } else if (actor.role === ROLES.HOD) {
     filter.department = actor.department;
   }

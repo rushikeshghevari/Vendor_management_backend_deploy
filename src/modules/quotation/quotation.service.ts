@@ -416,6 +416,30 @@ export const quotationService = {
       throw ApiError.forbidden('You can only add quotations to your own requirement');
     }
 
+    // Guards against an accidental double-submit (slow network prompting a retry, a confused
+    // re-tap after an error banner, etc.) creating two near-identical quotations — same vendor
+    // name + same amount, moments apart. A real second quotation from the same vendor (a
+    // revised price, a later re-quote) is still allowed once this short window has passed.
+    // Skipped for the AI placeholder vendor (see AI_PLACEHOLDER_VENDOR_NAME) — "Start Over With
+    // A Different File" deliberately creates a fresh one of these every time, and they're
+    // low-stakes (amount 1, never shown to the user, filtered out of every real list) so a
+    // legitimate quick retry must never be blocked as a false-positive duplicate here.
+    if (input.temporaryVendor.name !== AI_PLACEHOLDER_VENDOR_NAME) {
+      const DUPLICATE_SUBMIT_WINDOW_MS = 2 * 60 * 1000;
+      const recentDuplicate = await Quotation.findOne({
+        requirement: requirement._id,
+        isDeleted: { $ne: true },
+        amount: input.amount,
+        'temporaryVendor.name': input.temporaryVendor.name,
+        createdAt: { $gte: new Date(Date.now() - DUPLICATE_SUBMIT_WINDOW_MS) },
+      });
+      if (recentDuplicate) {
+        throw ApiError.conflict(
+          `An identical quotation for "${input.temporaryVendor.name}" at this amount was already added moments ago (${recentDuplicate.quotationCode}) — avoid submitting twice.`,
+        );
+      }
+    }
+
     const quotationCode = await generateQuotationCode(actor.department);
 
     const quotation = await Quotation.create({

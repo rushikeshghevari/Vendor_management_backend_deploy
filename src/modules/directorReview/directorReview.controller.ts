@@ -5,6 +5,7 @@ import { activityLogService } from '@/modules/activityLog/activityLog.service';
 import { directorReviewService } from '@/modules/directorReview/directorReview.service';
 import { notificationService } from '@/modules/notification/notification.service';
 import { Quotation } from '@/modules/quotation/quotation.model';
+import { User } from '@/modules/user/user.model';
 import { sendSuccess } from '@/utils/ApiResponse';
 import { catchAsync } from '@/utils/catchAsync';
 
@@ -70,6 +71,28 @@ export const directorReviewController = {
         { id: createdBy._id.toString(), role: ROLES.DEPARTMENT_USER },
       ];
       if (department.hod) receivers.push({ id: department.hod.toString(), role: ROLES.HOD });
+
+      // Whoever actually added a quotation to this requirement (e.g. a co-worker in the
+      // receiving department on a routed-in requirement — see RequirementListScreen's
+      // routing fix) has real stake in the Director's decision too, not just the original
+      // creator and the HOD. `submittedBy` covers an HOD submitting on a Department User's
+      // behalf; both fields can be absent/equal to createdBy, so dedup against what's
+      // already in `receivers` by id — `notifyUsers`' per-receiver dedupKey would also
+      // absorb an exact repeat, but skipping the extra User lookups here is cheaper.
+      const quotationUploaderIds = await Quotation.find({ requirement: requirement._id, isDeleted: { $ne: true } })
+        .distinct('createdBy')
+        .then((ids) => ids.map((id) => id.toString()));
+      const submittedByIds = await Quotation.find({ requirement: requirement._id, isDeleted: { $ne: true }, submittedBy: { $exists: true } })
+        .distinct('submittedBy')
+        .then((ids) => ids.map((id) => id.toString()));
+      const existingReceiverIds = new Set(receivers.map((r) => r.id));
+      const extraUploaderIds = [...new Set([...quotationUploaderIds, ...submittedByIds])].filter((id) => !existingReceiverIds.has(id));
+      if (extraUploaderIds.length > 0) {
+        const uploaders = await User.find({ _id: { $in: extraUploaderIds } }).select('role').lean();
+        for (const uploader of uploaders) {
+          receivers.push({ id: uploader._id.toString(), role: uploader.role as (typeof ROLES)[keyof typeof ROLES] });
+        }
+      }
 
       if (requirement.status === 'approved') {
         // Names the winning quotation in the notification itself — without this, "Ready for
