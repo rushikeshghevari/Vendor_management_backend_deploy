@@ -27,7 +27,11 @@ export const env = {
   // reflect any origin for credentialed requests. Must be set explicitly (see .env.example).
   corsOrigin: required('CORS_ORIGIN').split(',').map((origin) => origin.trim()),
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 900000),
-  rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? 100),
+  // Per-authenticated-user (falls back to per-IP only for unauthenticated calls — see
+  // rateLimiter.middleware.ts). Bumped from 100: a dashboard's handful of parallel list
+  // requests plus RTK Query refetches on every screen focus used up the old default well
+  // within normal single-user usage, not just abuse.
+  rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? 1000),
 
   seedSuperAdmin: {
     name: process.env.SEED_SUPER_ADMIN_NAME ?? 'Super Admin',

@@ -36,7 +36,10 @@ export const apiRateLimiter = rateLimit({
 
 export const authRateLimiter = rateLimit({
   windowMs: env.rateLimitWindowMs,
-  limit: 20,
+  // IP-based (see below), so this is shared across every user behind the same office/NAT
+  // IP — covers /login, /refresh (fired automatically per session), and /logout. Bumped
+  // from 20: that was tripping under normal multi-user same-IP traffic, not just abuse.
+  limit: 60,
   standardHeaders: true,
   legacyHeaders: false,
   // Auth endpoints stay IP-based intentionally — a per-user key for /login would let
