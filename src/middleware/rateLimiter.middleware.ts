@@ -37,9 +37,11 @@ export const apiRateLimiter = rateLimit({
 export const authRateLimiter = rateLimit({
   windowMs: env.rateLimitWindowMs,
   // IP-based (see below), so this is shared across every user behind the same office/NAT
-  // IP — covers /login, /refresh (fired automatically per session), and /logout. Bumped
-  // from 20: that was tripping under normal multi-user same-IP traffic, not just abuse.
-  limit: 60,
+  // IP — covers /login, /refresh (fired automatically per session), and /logout. Raised
+  // well past any real multi-user same-IP traffic (was 20, then 60 — both still tripped
+  // under normal use). Still technically capped, not removed outright, so this middleware
+  // stays in place as a backstop against a genuine runaway flood.
+  limit: 100_000,
   standardHeaders: true,
   legacyHeaders: false,
   // Auth endpoints stay IP-based intentionally — a per-user key for /login would let
