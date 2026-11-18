@@ -87,6 +87,11 @@ export const NOTIFICATION_TYPES = [
   // Nudges a Director who hasn't yet decided on a Requirement as its prepared quotation's
   // expectedPODate approaches — see directorApprovalReminder.service.ts.
   'director_approval_due_reminder',
+  // Phase 12 — HOD gate, department routing, Goods Handover.
+  'requirement_hod_accepted',
+  'requirement_forwarded',
+  'goods_handover_pending',
+  'goods_handover_received',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

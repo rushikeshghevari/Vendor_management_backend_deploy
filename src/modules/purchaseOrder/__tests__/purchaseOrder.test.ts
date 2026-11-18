@@ -102,7 +102,7 @@ async function setupApprovedLegacyQuotation(deptCode: string, amount = 40000): P
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -204,6 +204,8 @@ async function setupVendorFinalizedRequirement(deptCode: string, amount = 300000
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${superAdminToken}`).send();
 
   const registeredVendorName = `Winning Vendor ${deptCode}`;
   const quotationRes = await request(app)
@@ -215,7 +217,7 @@ async function setupVendorFinalizedRequirement(deptCode: string, amount = 300000
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -284,7 +286,7 @@ describe('POST /api/v1/purchase-orders — legacy quotation-based path (regressi
         amount: 20000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -356,6 +358,8 @@ describe('POST /api/v1/purchase-orders — requirement-based path (Phase 7)', ()
       .send({ title: 'Not Finalized', budget: 500000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -366,7 +370,7 @@ describe('POST /api/v1/purchase-orders — requirement-based path (Phase 7)', ()
         amount: 300000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });

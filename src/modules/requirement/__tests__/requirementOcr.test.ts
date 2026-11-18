@@ -31,7 +31,7 @@ async function pollUntilOcrSettled(app_: typeof app, token: string, quotationId:
   throw new Error('OCR did not settle within the polling window');
 }
 
-async function setupSubmittedRequirementWithQuotation(email: string) {
+async function setupSubmittedRequirementWithQuotation(email: string, adminEmail: string) {
   const token = await loginAs(email);
   const created = await request(app)
     .post('/api/v1/requirements')
@@ -40,6 +40,11 @@ async function setupSubmittedRequirementWithQuotation(email: string) {
   const requirementId = created.body.data._id;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${token}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app)
+    .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+    .set('Authorization', `Bearer ${await loginAs(adminEmail)}`)
+    .send();
 
   const quotationRes = await request(app)
     .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -50,7 +55,7 @@ async function setupSubmittedRequirementWithQuotation(email: string) {
       amount: 300000,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -64,7 +69,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/attachments (Pha
     const dept = await createTestDepartment({ name: 'OCR Dept', code: 'OCR', createdBy: admin.id });
     await createTestUser({ email: 'ocr-du@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
 
-    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du@vms.local');
+    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du@vms.local', 'ocr-admin@vms.local');
 
     const uploadRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations/${quotationId}/attachments`)
@@ -89,7 +94,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/attachments (Pha
     const dept = await createTestDepartment({ name: 'OCR Dept 2', code: 'OCR2', createdBy: admin.id });
     await createTestUser({ email: 'ocr-du2@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
 
-    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du2@vms.local');
+    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du2@vms.local', 'ocr-admin2@vms.local');
 
     const first = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations/${quotationId}/attachments`)
@@ -111,7 +116,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/attachments (Pha
     const dept = await createTestDepartment({ name: 'OCR Dept 3', code: 'OCR3', createdBy: admin.id });
     await createTestUser({ email: 'ocr-du3@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
 
-    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du3@vms.local');
+    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du3@vms.local', 'ocr-admin3@vms.local');
 
     const res = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations/${quotationId}/attachments`)
@@ -128,7 +133,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/ocr/retry', () =
     const dept = await createTestDepartment({ name: 'OCR Dept 4', code: 'OCR4', createdBy: admin.id });
     await createTestUser({ email: 'ocr-du4@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
 
-    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du4@vms.local');
+    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du4@vms.local', 'ocr-admin4@vms.local');
 
     await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations/${quotationId}/attachments`)
@@ -153,7 +158,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/ocr/retry', () =
     const dept = await createTestDepartment({ name: 'OCR Dept 5', code: 'OCR5', createdBy: admin.id });
     await createTestUser({ email: 'ocr-du5@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
 
-    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du5@vms.local');
+    const { token, requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du5@vms.local', 'ocr-admin5@vms.local');
 
     const res = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations/${quotationId}/ocr/retry`)
@@ -169,7 +174,7 @@ describe('POST /api/v1/requirements/:id/quotations/:quotationId/ocr/retry', () =
     await createTestUser({ email: 'ocr-du6@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
     await createTestUser({ email: 'ocr-director6@vms.local', role: ROLES.DIRECTOR });
 
-    const { requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du6@vms.local');
+    const { requirementId, quotationId } = await setupSubmittedRequirementWithQuotation('ocr-du6@vms.local', 'ocr-admin6@vms.local');
     const directorToken = await loginAs('ocr-director6@vms.local');
 
     const res = await request(app)

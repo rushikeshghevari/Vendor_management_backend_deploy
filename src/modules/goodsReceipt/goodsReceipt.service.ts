@@ -1,4 +1,5 @@
 import { ROLES, type Role } from '@/constants/roles';
+import { goodsHandoverService } from '@/modules/goodsHandover/goodsHandover.service';
 import { GoodsReceipt, type IGoodsReceipt } from '@/modules/goodsReceipt/goodsReceipt.model';
 import type { CreateGoodsReceiptInput, GoodsReceiptListQuery } from '@/modules/goodsReceipt/goodsReceipt.validation';
 import { notificationService } from '@/modules/notification/notification.service';
@@ -34,6 +35,7 @@ const POPULATE_LIST = [
   { path: 'vendor',     select: 'name code' },
   { path: 'department', select: 'name code' },
   { path: 'createdBy',  select: 'name email' },
+  { path: 'goodsHandover', select: 'status toDepartmentName handedOverAt receivedAt' },
 ];
 
 export const goodsReceiptService = {
@@ -81,6 +83,16 @@ export const goodsReceiptService = {
     // `PurchaseOrder.bill` is set once a Bill is created against it).
     po.goodsReceipt = receipt._id as unknown as typeof po.goodsReceipt;
     await po.save();
+
+    // Phase 12 — a no-op unless this Requirement's routing history shows Admin as a genuine
+    // pass-through department (see goodsHandoverService.createIfApplicable).
+    try {
+      const handover = await goodsHandoverService.createIfApplicable(receipt);
+      if (handover) {
+        receipt.goodsHandover = handover._id as unknown as typeof receipt.goodsHandover;
+        await receipt.save();
+      }
+    } catch { /* non-fatal — Goods Receipt itself must not fail because of this */ }
 
     try {
       const [superAdmins, ceos, directors] = await Promise.all([

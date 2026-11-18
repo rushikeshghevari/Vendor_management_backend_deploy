@@ -51,6 +51,13 @@ export const ACTIVITY_ACTIONS = [
   'vendor_registration_link_verified',
   'recurring_expense_created',
   'recurring_expense_cycle_generated',
+  // Phase 12 — HOD gate, department routing, Goods Handover.
+  'requirement_hod_accepted',
+  'requirement_forwarded',
+  'requirement_forward_edited',
+  'goods_handover_handed_over',
+  'goods_handover_received',
+  'goods_handover_distributed',
 ] as const;
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
 
@@ -78,7 +85,7 @@ const activityLogSchema = new Schema<IActivityLog>(
     performedByRole:  { type: String, enum: ALL_ROLES, required: true },
     department:       { type: Schema.Types.ObjectId, ref: 'Department' },
     targetId:         { type: Schema.Types.ObjectId },
-    targetType:       { type: String, trim: true },
+    targetType:       { type: String, c : true },
     oldValue:         { type: Schema.Types.Mixed },
     newValue:         { type: Schema.Types.Mixed },
     ipAddress:        { type: String, trim: true },

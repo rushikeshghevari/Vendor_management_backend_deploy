@@ -82,7 +82,7 @@ describe('PATCH /api/v1/requirements/:id/submit', () => {
       .send();
 
     expect(res.status).toBe(200);
-    expect(res.body.data.status).toBe('submitted');
+    expect(res.body.data.status).toBe('hod_review');
   });
 
   it('cannot submit another Department User\'s requirement', async () => {
@@ -155,6 +155,7 @@ describe('GET /api/v1/requirements', () => {
     const dept = await createTestDepartment({ name: 'Procurement QC', code: 'PQC', createdBy: admin.id });
     await createTestUser({ email: 'du-qc@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
     const token = await loginAs('du-qc@vms.local');
+    const adminToken = await loginAs('admin-qc@vms.local');
 
     const noQuotationReq = await request(app)
       .post('/api/v1/requirements')
@@ -171,13 +172,19 @@ describe('GET /api/v1/requirements', () => {
       .patch(`/api/v1/requirements/${multiQuotationReqId}/submit`)
       .set('Authorization', `Bearer ${token}`)
       .send();
+    // Phase 12 — mandatory HOD gate: a requirement sits at hod_review until accepted before
+    // quotation collection unlocks.
+    await request(app)
+      .patch(`/api/v1/requirements/${multiQuotationReqId}/hod-accept`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
 
     const quotationPayload = {
       quotationDate: '2026-07-17',
       amount: 100000,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     };
@@ -218,6 +225,7 @@ describe('Requirement-linked quotations', () => {
     const dept = await createTestDepartment({ name: 'Procurement', code: 'PUR', createdBy: admin.id });
     await createTestUser({ email: 'du@vms.local', role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
     const token = await loginAs('du@vms.local');
+    const adminToken = await loginAs('admin@vms.local');
 
     const createdRequirement = await request(app)
       .post('/api/v1/requirements')
@@ -227,6 +235,10 @@ describe('Requirement-linked quotations', () => {
     await request(app)
       .patch(`/api/v1/requirements/${createdRequirement.body.data._id}/submit`)
       .set('Authorization', `Bearer ${token}`)
+      .send();
+    await request(app)
+      .patch(`/api/v1/requirements/${createdRequirement.body.data._id}/hod-accept`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send();
 
     const firstQuotation = await request(app)
@@ -238,7 +250,7 @@ describe('Requirement-linked quotations', () => {
         amount: 100000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -252,7 +264,7 @@ describe('Requirement-linked quotations', () => {
         amount: 110000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 45',
+        paymentTerms: 'Net 45', creditPeriod: 30,
         deliveryTerms: 'Within 3 Weeks',
         priority: 'high',
       });
@@ -288,6 +300,10 @@ describe('Requirement-linked quotations', () => {
       .patch(`/api/v1/requirements/${requirementId}/submit`)
       .set('Authorization', `Bearer ${duToken}`)
       .send();
+    await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+      .set('Authorization', `Bearer ${await loginAs('admin2@vms.local')}`)
+      .send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -298,7 +314,7 @@ describe('Requirement-linked quotations', () => {
         amount: 750000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 4 Weeks',
         priority: 'high',
       });
@@ -351,13 +367,17 @@ describe('Requirement-linked quotations', () => {
       .patch(`/api/v1/requirements/${requirementId}/submit`)
       .set('Authorization', `Bearer ${duToken}`)
       .send();
+    await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+      .set('Authorization', `Bearer ${await loginAs('admin3@vms.local')}`)
+      .send();
 
     const quotationPayload = {
       quotationDate: '2026-07-17',
       amount: 450000,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 4 Weeks',
       priority: 'high',
     };
@@ -461,6 +481,7 @@ describe('GET /api/v1/requirements/:id/quotations — visibility (regression)', 
     const requirementId = created.body.data._id;
 
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${hodToken}`).send();
 
     // One quotation well under the default ₹50,000 CEO Approval Limit, one well above it —
     // both must be visible to every role that can see the requirement, since neither amount
@@ -471,7 +492,7 @@ describe('GET /api/v1/requirements/:id/quotations — visibility (regression)', 
       .send({
         temporaryVendor: { name: 'Low Amount Vendor' },
         quotationDate: '2026-07-17', amount: 20000, gst: 18, currency: 'INR',
-        paymentTerms: 'Net 30', deliveryTerms: 'Within 2 Weeks', priority: 'medium',
+        paymentTerms: 'Net 30', creditPeriod: 30, deliveryTerms: 'Within 2 Weeks', priority: 'medium',
       });
     const highAmountQuotation = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -479,7 +500,7 @@ describe('GET /api/v1/requirements/:id/quotations — visibility (regression)', 
       .send({
         temporaryVendor: { name: 'High Amount Vendor' },
         quotationDate: '2026-07-17', amount: 450000, gst: 18, currency: 'INR',
-        paymentTerms: 'Net 30', deliveryTerms: 'Within 2 Weeks', priority: 'high',
+        paymentTerms: 'Net 30', creditPeriod: 30, deliveryTerms: 'Within 2 Weeks', priority: 'high',
       });
     expect(lowAmountQuotation.status).toBe(201);
     expect(highAmountQuotation.status).toBe(201);
@@ -517,5 +538,249 @@ describe('GET /api/v1/requirements/:id/quotations — visibility (regression)', 
       .get(`/api/v1/requirements/${requirementId}/quotations`)
       .set('Authorization', `Bearer ${otherToken}`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('Phase 12 — POST /requirements ignores a stray targetDepartment', () => {
+  it('always creates the requirement in the creator\'s own department, regardless of body content', async () => {
+    const admin = await createTestUser({ email: 'td-admin@vms.local', role: ROLES.SUPER_ADMIN });
+    const ownDept = await createTestDepartment({ name: 'Own Dept', code: 'TDOWN', createdBy: admin.id });
+    const otherDept = await createTestDepartment({ name: 'Other Dept', code: 'TDOTHER', createdBy: admin.id });
+    const du = await createTestUser({ email: 'td-du@vms.local', role: ROLES.DEPARTMENT_USER, department: ownDept._id.toString() });
+    const token = tokenFor(du);
+
+    const res = await request(app)
+      .post('/api/v1/requirements')
+      .set('Authorization', `Bearer ${token}`)
+      // targetDepartment no longer exists on the schema — sending it must be a harmless no-op,
+      // not an error and not actually routed there.
+      .send({ title: 'Should stay home', budget: 1000, requiredDate: '2026-08-01', items: sampleItems, targetDepartment: otherDept._id.toString() });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.department).toBe(ownDept._id.toString());
+  });
+});
+
+describe('Phase 12 — PATCH /requirements/:id/hod-accept', () => {
+  async function setupForHodGate(deptCode: string) {
+    const admin = await createTestUser({ email: `ha-admin-${deptCode}@vms.local`, role: ROLES.SUPER_ADMIN });
+    const dept = await createTestDepartment({ name: `HA Dept ${deptCode}`, code: deptCode, createdBy: admin.id });
+    const hod = await createTestUser({ email: `ha-hod-${deptCode}@vms.local`, role: ROLES.HOD, department: dept._id.toString() });
+    const du = await createTestUser({ email: `ha-du-${deptCode}@vms.local`, role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
+
+    const duToken = tokenFor(du);
+    const hodToken = tokenFor(hod);
+    const adminToken = tokenFor(admin);
+
+    const created = await request(app)
+      .post('/api/v1/requirements')
+      .set('Authorization', `Bearer ${duToken}`)
+      .send({ title: `HA req ${deptCode}`, budget: 1000, requiredDate: '2026-08-01', items: sampleItems });
+    const requirementId = created.body.data._id as string;
+
+    await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+
+    return { admin, dept, hod, du, duToken, hodToken, adminToken, requirementId };
+  }
+
+  it('lets the owning department\'s HOD accept, moving status to submitted', async () => {
+    const { hodToken, requirementId } = await setupForHodGate('HA1');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send();
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('submitted');
+  });
+
+  it('forbids a HOD of a different department from accepting', async () => {
+    const { requirementId } = await setupForHodGate('HA2');
+    const admin = await createTestUser({ email: 'ha-outside-admin@vms.local', role: ROLES.SUPER_ADMIN });
+    const otherDept = await createTestDepartment({ name: 'HA Outside Dept', code: 'HAOUT', createdBy: admin.id });
+    const otherHod = await createTestUser({ email: 'ha-outside-hod@vms.local', role: ROLES.HOD, department: otherDept._id.toString() });
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+      .set('Authorization', `Bearer ${tokenFor(otherHod)}`)
+      .send();
+
+    expect(res.status).toBe(404);
+  });
+
+  it('lets Super Admin accept any requirement regardless of department', async () => {
+    const { adminToken, requirementId } = await setupForHodGate('HA3');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send();
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('submitted');
+  });
+
+  it('cannot be accepted twice — a second attempt 404s once already past hod_review', async () => {
+    const { hodToken, requirementId } = await setupForHodGate('HA4');
+
+    const first = await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${hodToken}`).send();
+    expect(first.status).toBe(200);
+
+    const second = await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${hodToken}`).send();
+    expect(second.status).toBe(404);
+  });
+});
+
+describe('Phase 12 — PATCH /requirements/:id/forward and /forward/edit', () => {
+  async function setupForForward(deptCode: string) {
+    const admin = await createTestUser({ email: `fw-admin-${deptCode}@vms.local`, role: ROLES.SUPER_ADMIN });
+    const dept = await createTestDepartment({ name: `FW Dept ${deptCode}`, code: deptCode, createdBy: admin.id });
+    const otherDept = await createTestDepartment({ name: `FW Other Dept ${deptCode}`, code: `${deptCode}O`, createdBy: admin.id });
+    const hod = await createTestUser({ email: `fw-hod-${deptCode}@vms.local`, role: ROLES.HOD, department: dept._id.toString() });
+    const du = await createTestUser({ email: `fw-du-${deptCode}@vms.local`, role: ROLES.DEPARTMENT_USER, department: dept._id.toString() });
+
+    const duToken = tokenFor(du);
+    const hodToken = tokenFor(hod);
+
+    const created = await request(app)
+      .post('/api/v1/requirements')
+      .set('Authorization', `Bearer ${duToken}`)
+      .send({ title: `FW req ${deptCode}`, budget: 1000, requiredDate: '2026-08-01', items: sampleItems });
+    const requirementId = created.body.data._id as string;
+
+    await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+
+    return { admin, dept, otherDept, hod, du, duToken, hodToken, requirementId };
+  }
+
+  it('forwards to a different active department — department changes, routingHistory gains one entry, status stays hod_review', async () => {
+    const { otherDept, hodToken, requirementId } = await setupForForward('FW1');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('hod_review');
+    expect(res.body.data.department._id).toBe(otherDept._id.toString());
+    expect(res.body.data.routingHistory).toHaveLength(1);
+    // routingHistory's fromDepartment/toDepartment/forwardedBy share a `ref` with the
+    // top-level `department`/`createdBy`/`submittedBy` paths requirementService.forward()
+    // populates — Mongoose populates every matching-ref field it finds in the document, not
+    // just the explicitly listed paths, so these come back populated too.
+    expect(res.body.data.routingHistory[0].toDepartment._id).toBe(otherDept._id.toString());
+  });
+
+  it('rejects forwarding to a non-existent/inactive department', async () => {
+    const { hodToken, requirementId } = await setupForForward('FW2');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: '507f1f77bcf86cd799439099' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects forwarding to the department that already owns it', async () => {
+    const { dept, hodToken, requirementId } = await setupForForward('FW3');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: dept._id.toString() });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a second forward by the same department — one-shot per hand-off', async () => {
+    const { otherDept, hodToken, requirementId } = await setupForForward('FW4');
+
+    const first = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+    expect(first.status).toBe(200);
+
+    // The ORIGINAL department trying to forward again — reconstructing a would-be second
+    // forward attempt is only meaningful while it still owned the requirement, so this checks
+    // the one-shot rule's own bookkeeping directly via a forced second call using the same HOD
+    // token immediately (the HOD's department no longer owns it, so this now also exercises
+    // the "not currently awaiting your department's review" 404 path — both are valid rejections
+    // of the same mistaken retry).
+    const second = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+    expect([404, 409]).toContain(second.status);
+  });
+
+  it('forbids a HOD whose department does not currently own the requirement', async () => {
+    const { requirementId } = await setupForForward('FW5');
+    const admin = await createTestUser({ email: 'fw-outside-admin@vms.local', role: ROLES.SUPER_ADMIN });
+    const outsideDept = await createTestDepartment({ name: 'FW Outside Dept', code: 'FWOUT', createdBy: admin.id });
+    const outsideHod = await createTestUser({ email: 'fw-outside-hod@vms.local', role: ROLES.HOD, department: outsideDept._id.toString() });
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${tokenFor(outsideHod)}`)
+      .send({ toDepartment: outsideDept._id.toString() });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('lets the forwarding department correct the latest forward\'s target', async () => {
+    const { otherDept, hodToken, requirementId } = await setupForForward('FW6');
+    const admin = await createTestUser({ email: 'fw-third-admin@vms.local', role: ROLES.SUPER_ADMIN });
+    const thirdDept = await createTestDepartment({ name: 'FW Third Dept', code: 'FWTHIRD', createdBy: admin.id });
+
+    const forwarded = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+    expect(forwarded.status).toBe(200);
+
+    const edited = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward/edit`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: thirdDept._id.toString() });
+
+    expect(edited.status).toBe(200);
+    expect(edited.body.data.department._id).toBe(thirdDept._id.toString());
+    expect(edited.body.data.routingHistory).toHaveLength(1);
+    expect(edited.body.data.routingHistory[0].toDepartment._id).toBe(thirdDept._id.toString());
+  });
+
+  it('forbids a department other than the one that made the forward from editing it', async () => {
+    const { otherDept, hodToken, requirementId } = await setupForForward('FW7');
+    const admin = await createTestUser({ email: 'fw-editor-admin@vms.local', role: ROLES.SUPER_ADMIN });
+    const unrelatedDept = await createTestDepartment({ name: 'FW Unrelated Dept', code: 'FWUNREL', createdBy: admin.id });
+    const unrelatedHod = await createTestUser({ email: 'fw-unrelated-hod@vms.local', role: ROLES.HOD, department: unrelatedDept._id.toString() });
+
+    const forwarded = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+    expect(forwarded.status).toBe(200);
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward/edit`)
+      .set('Authorization', `Bearer ${tokenFor(unrelatedHod)}`)
+      .send({ toDepartment: unrelatedDept._id.toString() });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects editing when the requirement has never been forwarded', async () => {
+    const { hodToken, otherDept, requirementId } = await setupForForward('FW8');
+
+    const res = await request(app)
+      .patch(`/api/v1/requirements/${requirementId}/forward/edit`)
+      .set('Authorization', `Bearer ${hodToken}`)
+      .send({ toDepartment: otherDept._id.toString() });
+
+    expect(res.status).toBe(400);
   });
 });

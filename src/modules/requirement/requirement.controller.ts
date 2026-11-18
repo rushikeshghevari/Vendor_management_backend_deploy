@@ -108,6 +108,100 @@ export const requirementController = {
     sendSuccess(res, requirement, 'Requirement submitted');
   }),
 
+  hodAccept: catchAsync(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const requirement = await requirementService.hodAccept(id, req.user!);
+
+    const department = requirement.department as unknown as { _id: { toString(): string } };
+
+    activityLogService.record(
+      {
+        action: 'requirement_hod_accepted',
+        department: department._id.toString(),
+        targetId: requirement.id,
+        targetType: 'Requirement',
+        newValue: { requirementNumber: requirement.requirementNumber },
+      },
+      req.user!,
+      req,
+    ).catch(() => null);
+
+    notificationService.findActiveUsersByRole(ROLES.SUPER_ADMIN)
+      .then((admins) => notificationService.notifyUsers(admins, {
+        title: 'Requirement Accepted',
+        message: `${requirement.requirementNumber} — ${requirement.title} was accepted by its HOD.`,
+        module: 'requirement',
+        relatedRecord: requirement.id,
+        notificationType: 'requirement_hod_accepted',
+        priority: 'low',
+        category: 'information',
+        sender: req.user!.id,
+      }))
+      .catch(() => null);
+
+    sendSuccess(res, requirement, 'Requirement accepted');
+  }),
+
+  forward: catchAsync(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const requirement = await requirementService.forward(id, req.body, req.user!);
+
+    const department = requirement.department as unknown as { _id: { toString(): string }; hod?: { toString(): string } };
+    const latestEntry = requirement.routingHistory[requirement.routingHistory.length - 1];
+
+    activityLogService.record(
+      {
+        action: 'requirement_forwarded',
+        department: department._id.toString(),
+        targetId: requirement.id,
+        targetType: 'Requirement',
+        newValue: { requirementNumber: requirement.requirementNumber, toDepartment: department._id.toString() },
+      },
+      req.user!,
+      req,
+    ).catch(() => null);
+
+    const receivers: Array<{ id: string; role: (typeof ROLES)[keyof typeof ROLES] }> = [];
+    if (department?.hod) receivers.push({ id: department.hod.toString(), role: ROLES.HOD });
+
+    notificationService.findActiveUsersByRole(ROLES.SUPER_ADMIN)
+      .then((admins) => notificationService.notifyUsers([...receivers, ...admins], {
+        title: 'Requirement Forwarded To Your Department',
+        message: `${requirement.requirementNumber} — ${requirement.title} was forwarded for your review.`,
+        module: 'requirement',
+        relatedRecord: requirement.id,
+        notificationType: 'requirement_forwarded',
+        priority: 'medium',
+        category: 'information',
+        sender: req.user!.id,
+        dedupKey: latestEntry ? `requirement_forwarded:${requirement.id}:${latestEntry.forwardedAt.getTime()}` : undefined,
+      }))
+      .catch(() => null);
+
+    sendSuccess(res, requirement, 'Requirement forwarded');
+  }),
+
+  forwardEdit: catchAsync(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const requirement = await requirementService.forwardEdit(id, req.body, req.user!);
+
+    const department = requirement.department as unknown as { _id: { toString(): string } };
+
+    activityLogService.record(
+      {
+        action: 'requirement_forward_edited',
+        department: department._id.toString(),
+        targetId: requirement.id,
+        targetType: 'Requirement',
+        newValue: { requirementNumber: requirement.requirementNumber, toDepartment: department._id.toString() },
+      },
+      req.user!,
+      req,
+    ).catch(() => null);
+
+    sendSuccess(res, requirement, 'Forward corrected');
+  }),
+
   submitToDirector: catchAsync(async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const requirement = await requirementService.submitToDirector(id, req.user!);

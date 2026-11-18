@@ -81,6 +81,8 @@ async function setupApprovedRequirement(deptCode: string, amount = 300000): Prom
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${superAdminToken}`).send();
 
   const quotationRes = await request(app)
     .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -91,7 +93,7 @@ async function setupApprovedRequirement(deptCode: string, amount = 300000): Prom
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });

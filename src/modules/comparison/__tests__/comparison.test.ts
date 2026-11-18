@@ -77,6 +77,11 @@ async function setupRequirementWithQuotations(deptCode: string) {
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${token}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app)
+    .patch(`/api/v1/requirements/${requirementId}/hod-accept`)
+    .set('Authorization', `Bearer ${await loginAs(`cmp-admin-${deptCode}@vms.local`)}`)
+    .send();
 
   return { token, requirementId, dept };
 }
@@ -91,7 +96,7 @@ async function addQuotation(token: string, requirementId: string, amount: number
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });

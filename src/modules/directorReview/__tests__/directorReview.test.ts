@@ -94,6 +94,8 @@ async function setupRequirementWithComparison(deptCode: string): Promise<Setup> 
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${superAdminToken}`).send();
 
   const quotationRes = await request(app)
     .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -104,7 +106,7 @@ async function setupRequirementWithComparison(deptCode: string): Promise<Setup> 
       amount: 300000,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -139,6 +141,8 @@ describe('GET /api/v1/requirements/:id/director-review', () => {
       .send({ title: 'No Comparison Yet', budget: 100000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -149,7 +153,7 @@ describe('GET /api/v1/requirements/:id/director-review', () => {
         amount: 40000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 1 Week',
         priority: 'medium',
       });
@@ -451,7 +455,7 @@ describe('Full workflow — Send Back then re-review to Approve', () => {
         amount: 280000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 45',
+        paymentTerms: 'Net 45', creditPeriod: 30,
         deliveryTerms: 'Within 3 Weeks',
         priority: 'medium',
       });
@@ -505,7 +509,7 @@ describe('Workflow enhancement — Director submission control', () => {
         amount: 250000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -526,7 +530,7 @@ describe('Workflow enhancement — Director submission control', () => {
         amount: 250000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -549,6 +553,8 @@ describe('Workflow enhancement — Director submission control', () => {
     const requirementId = created.body.data._id as string;
 
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -559,7 +565,7 @@ describe('Workflow enhancement — Director submission control', () => {
         amount: 300000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -601,8 +607,8 @@ describe('Workflow enhancement — Director submission control', () => {
       .send({ title: 'No Quotations Yet', budget: 100000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
 
-    // Still 'submitted' (draft -> submitted), never entered quotation_collection — submit-to-director
-    // is only reachable from quotation_collection.
+    // Still 'hod_review' (draft -> hod_review, Phase 12), never entered quotation_collection —
+    // submit-to-director is only reachable from quotation_collection.
     const tooEarly = await request(app).patch(`/api/v1/requirements/${requirementId}/submit-to-director`).set('Authorization', `Bearer ${duToken}`).send();
     expect(tooEarly.status).toBe(404);
 
@@ -666,6 +672,8 @@ describe('Workflow enhancement — Parallel dual Director approval', () => {
     const requirementId = created.body.data._id as string;
 
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
       .set('Authorization', `Bearer ${duToken}`)
@@ -675,7 +683,7 @@ describe('Workflow enhancement — Parallel dual Director approval', () => {
         amount: 200000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -908,18 +916,20 @@ describe('POST decision — Director explicit quotation selection (selectedQuota
       .send({ title: `Selection Requirement ${deptCode}`, budget: 500000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const cheapRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
       .set('Authorization', `Bearer ${duToken}`)
-      .send({ temporaryVendor: { name: 'Vendor Cheap' }, quotationDate: '2026-07-18', amount: 200000, gst: 18, currency: 'INR', paymentTerms: 'Net 30', deliveryTerms: 'Within 2 Weeks', priority: 'medium' });
+      .send({ temporaryVendor: { name: 'Vendor Cheap' }, quotationDate: '2026-07-18', amount: 200000, gst: 18, currency: 'INR', paymentTerms: 'Net 30', creditPeriod: 30, deliveryTerms: 'Within 2 Weeks', priority: 'medium' });
     const cheapQuotationId = cheapRes.body.data._id as string;
     await seedOcrResult(cheapQuotationId, 200000);
 
     const premiumRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
       .set('Authorization', `Bearer ${duToken}`)
-      .send({ temporaryVendor: { name: 'Vendor Premium' }, quotationDate: '2026-07-18', amount: 300000, gst: 18, currency: 'INR', paymentTerms: 'Net 30', deliveryTerms: 'Within 2 Weeks', priority: 'medium' });
+      .send({ temporaryVendor: { name: 'Vendor Premium' }, quotationDate: '2026-07-18', amount: 300000, gst: 18, currency: 'INR', paymentTerms: 'Net 30', creditPeriod: 30, deliveryTerms: 'Within 2 Weeks', priority: 'medium' });
     const premiumQuotationId = premiumRes.body.data._id as string;
     await seedOcrResult(premiumQuotationId, 300000);
 

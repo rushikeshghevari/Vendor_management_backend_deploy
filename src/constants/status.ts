@@ -114,6 +114,10 @@ export type PaymentFailureReason = (typeof PAYMENT_FAILURE_REASON)[keyof typeof 
 // schema enum doesn't need a migration when later phases wire them in.
 export const REQUIREMENT_STATUS = {
   DRAFT: 'draft',
+  // Phase 12 — mandatory HOD gate, entered every time ownership (`department`) changes:
+  // right after the first submit, and again after every forward. See
+  // docs/PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md.
+  HOD_REVIEW: 'hod_review',
   SUBMITTED: 'submitted',
   QUOTATION_COLLECTION: 'quotation_collection',
   QUOTATION_COMPARISON: 'quotation_comparison',
@@ -170,6 +174,18 @@ export const RECURRING_MODE = {
   REIMBURSEMENT: 'reimbursement',
 } as const;
 export type RecurringMode = (typeof RECURRING_MODE)[keyof typeof RECURRING_MODE];
+
+// Phase 12 — Goods Handover. Created once per Goods Receipt, only when the Requirement's
+// routingHistory shows the Admin department as a pass-through (not the department that
+// actually ran the PO). Two-sided confirmation: the department that ran the PO marks
+// `handed_over`, then Admin marks `received`. See
+// docs/PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md.
+export const GOODS_HANDOVER_STATUS = {
+  PENDING: 'pending',
+  HANDED_OVER: 'handed_over',
+  RECEIVED: 'received',
+} as const;
+export type GoodsHandoverStatus = (typeof GOODS_HANDOVER_STATUS)[keyof typeof GOODS_HANDOVER_STATUS];
 
 /** Quotation attachment OCR pipeline — see `src/services/ocr/quotationOcr.service.ts`. */
 export const OCR_STATUS = {

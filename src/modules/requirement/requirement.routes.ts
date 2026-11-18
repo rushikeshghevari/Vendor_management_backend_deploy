@@ -10,6 +10,7 @@ import { requirementController } from '@/modules/requirement/requirement.control
 import { createRequirementQuotationSchema, quotationListQuerySchema } from '@/modules/quotation/quotation.validation';
 import {
   createRequirementSchema,
+  forwardRequirementSchema,
   requirementListQuerySchema,
   setPreparedQuotationSchema,
   updateRequirementSchema,
@@ -202,6 +203,110 @@ router.patch(
   authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
   validate({ params: mongoIdParamSchema() }),
   requirementController.submit,
+);
+
+/**
+ * @openapi
+ * /requirements/{id}/hod-accept:
+ *   patch:
+ *     tags: [Requirements]
+ *     summary: >
+ *       Phase 12 — the owning department's HOD accepts a requirement at the mandatory
+ *       HOD_REVIEW gate. Moves it to Submitted, after which quotation collection unlocks
+ *       exactly as before this phase.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Requirement accepted }
+ *       401: { description: Missing or invalid access token }
+ *       403: { description: Caller is not the owning department's HOD or Super Admin }
+ *       404: { description: Requirement not found, or not awaiting this department's review }
+ */
+router.patch(
+  '/:id/hod-accept',
+  authorize(ROLES.HOD, ROLES.SUPER_ADMIN),
+  validate({ params: mongoIdParamSchema() }),
+  requirementController.hodAccept,
+);
+
+/**
+ * @openapi
+ * /requirements/{id}/forward:
+ *   patch:
+ *     tags: [Requirements]
+ *     summary: >
+ *       Phase 12 — the alternative to accepting: the owning department's HOD forwards the
+ *       requirement to a different department instead. One-shot per department — a
+ *       department that already forwarded this requirement once must use the edit action to
+ *       correct its target instead of forwarding again.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [toDepartment]
+ *             properties:
+ *               toDepartment: { type: string }
+ *               remarks: { type: string, maxLength: 1000 }
+ *     responses:
+ *       200: { description: Requirement forwarded }
+ *       400: { description: Invalid target department, or it already owns this requirement }
+ *       401: { description: Missing or invalid access token }
+ *       403: { description: Caller is not the owning department's HOD or Super Admin }
+ *       404: { description: Requirement not found, or not awaiting this department's review }
+ *       409: { description: This department has already forwarded this requirement once }
+ */
+router.patch(
+  '/:id/forward',
+  authorize(ROLES.HOD, ROLES.SUPER_ADMIN),
+  validate({ params: mongoIdParamSchema(), body: forwardRequirementSchema }),
+  requirementController.forward,
+);
+
+/**
+ * @openapi
+ * /requirements/{id}/forward/edit:
+ *   patch:
+ *     tags: [Requirements]
+ *     summary: >
+ *       Phase 12 — corrects the most recent forward's target department (fixes a mistaken
+ *       pick). Only the department that made that forward (or Super Admin) may correct it,
+ *       and only while it's still sitting unacted-on at the mistaken target.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [toDepartment]
+ *             properties:
+ *               toDepartment: { type: string }
+ *     responses:
+ *       200: { description: Forward corrected }
+ *       400: { description: Invalid target department, no forward to edit, or it matches the current owner }
+ *       401: { description: Missing or invalid access token }
+ *       403: { description: Caller did not make the original forward }
+ *       404: { description: Requirement not found, or not awaiting review }
+ */
+router.patch(
+  '/:id/forward/edit',
+  authorize(ROLES.HOD, ROLES.SUPER_ADMIN),
+  validate({ params: mongoIdParamSchema(), body: forwardRequirementSchema }),
+  requirementController.forwardEdit,
 );
 
 /**

@@ -9,6 +9,31 @@ import {
   type RequirementStatus,
 } from '@/constants/status';
 
+// ─── Sub-document: Routing History Entry (Phase 12) ───────────────────────────
+// One entry per forward action — a department may forward at most once while it owns the
+// Requirement (enforced in requirement.service.ts, not here). `editedAt` is set when the
+// *latest* entry's `toDepartment` is corrected via the forward/edit action; there is no
+// deadline on that correction (confirmed decision — see docs/
+// PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md).
+export interface IRoutingHistoryEntry {
+  fromDepartment: Types.ObjectId;
+  toDepartment: Types.ObjectId;
+  forwardedBy: Types.ObjectId;
+  forwardedAt: Date;
+  editedAt?: Date;
+}
+
+const routingHistoryEntrySchema = new Schema<IRoutingHistoryEntry>(
+  {
+    fromDepartment: { type: Schema.Types.ObjectId, ref: 'Department', required: true },
+    toDepartment:   { type: Schema.Types.ObjectId, ref: 'Department', required: true },
+    forwardedBy:    { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    forwardedAt:    { type: Date, required: true },
+    editedAt:       { type: Date },
+  },
+  { _id: false },
+);
+
 // ─── Sub-document: Requirement Item ───────────────────────────────────────────
 export interface IRequirementItem {
   itemName: string;
@@ -72,6 +97,16 @@ export interface IRequirement extends Document {
    *  quotation prepared and a Director approving it are two separate events that can be days
    *  apart. Cleared alongside `preparedQuotation` when unmarked. */
   preparedQuotationAt?: Date;
+  /** Phase 12 — set once the current owning department's HOD accepts the Requirement at the
+   *  mandatory HOD_REVIEW gate (as opposed to forwarding it on). Overwritten on each
+   *  acceptance if the Requirement was forwarded and later accepted by a different
+   *  department's HOD — only the most recent acceptance matters operationally. */
+  hodAcceptedBy?: Types.ObjectId;
+  hodAcceptedAt?: Date;
+  /** Phase 12 — append-only log of every forward (department hand-off) this Requirement has
+   *  been through. `department` (above) always reflects the current owner; this array is the
+   *  only record of how it got there. See docs/PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md. */
+  routingHistory: IRoutingHistoryEntry[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -105,6 +140,9 @@ const requirementSchema = new Schema<IRequirement>(
     finalizedVendor: { type: Schema.Types.ObjectId, ref: 'Vendor' },
     preparedQuotation: { type: Schema.Types.ObjectId, ref: 'Quotation' },
     preparedQuotationAt: { type: Date },
+    hodAcceptedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    hodAcceptedAt: { type: Date },
+    routingHistory: { type: [routingHistoryEntrySchema], required: true, default: [] },
   },
   { timestamps: true },
 );

@@ -90,6 +90,8 @@ async function setupApprovedRequirement(deptCode: string, amount = 300000): Prom
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${superAdminToken}`).send();
 
   const quotationRes = await request(app)
     .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -100,7 +102,7 @@ async function setupApprovedRequirement(deptCode: string, amount = 300000): Prom
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -265,6 +267,8 @@ describe('POST /api/v1/requirements/:id/vendor-registration', () => {
       .send({ title: 'Dual Director Vendor Reg', budget: 400000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -275,7 +279,7 @@ describe('POST /api/v1/requirements/:id/vendor-registration', () => {
         amount: 350000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -321,6 +325,8 @@ describe('POST /api/v1/requirements/:id/vendor-registration', () => {
       .send({ title: 'No Comparison Vendor Reg', budget: 100000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const quotationRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -331,7 +337,7 @@ describe('POST /api/v1/requirements/:id/vendor-registration', () => {
         amount: 45000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 15',
+        paymentTerms: 'Net 15', creditPeriod: 30,
         deliveryTerms: 'Within 1 Week',
         priority: 'medium',
       });
@@ -443,6 +449,8 @@ describe('POST /api/v1/requirements/:id/vendor-registration — Director explici
       .send({ title: `Selection Vendor Reg ${deptCode}`, budget: 500000, requiredDate: '2026-08-01', items: sampleItems });
     const requirementId = created.body.data._id as string;
     await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+    // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+    await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
     const cheapRes = await request(app)
       .post(`/api/v1/requirements/${requirementId}/quotations`)
@@ -453,7 +461,7 @@ describe('POST /api/v1/requirements/:id/vendor-registration — Director explici
         amount: 200000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });
@@ -469,7 +477,7 @@ describe('POST /api/v1/requirements/:id/vendor-registration — Director explici
         amount: 300000,
         gst: 18,
         currency: 'INR',
-        paymentTerms: 'Net 30',
+        paymentTerms: 'Net 30', creditPeriod: 30,
         deliveryTerms: 'Within 2 Weeks',
         priority: 'medium',
       });

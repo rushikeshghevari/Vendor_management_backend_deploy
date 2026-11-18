@@ -88,7 +88,7 @@ async function setupLegacyPo(deptCode: string, amount = 40000): Promise<LegacyPo
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });
@@ -188,6 +188,8 @@ async function setupRequirementPo(deptCode: string, amount = 300000): Promise<Re
   const requirementId = created.body.data._id as string;
 
   await request(app).patch(`/api/v1/requirements/${requirementId}/submit`).set('Authorization', `Bearer ${duToken}`).send();
+  // Phase 12 — mandatory HOD gate before quotation collection unlocks.
+  await request(app).patch(`/api/v1/requirements/${requirementId}/hod-accept`).set('Authorization', `Bearer ${tokenFor(admin)}`).send();
 
   const registeredVendorName = `GRN Winning Vendor ${deptCode}`;
   const quotationRes = await request(app)
@@ -199,7 +201,7 @@ async function setupRequirementPo(deptCode: string, amount = 300000): Promise<Re
       amount,
       gst: 18,
       currency: 'INR',
-      paymentTerms: 'Net 30',
+      paymentTerms: 'Net 30', creditPeriod: 30,
       deliveryTerms: 'Within 2 Weeks',
       priority: 'medium',
     });

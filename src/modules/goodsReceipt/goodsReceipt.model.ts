@@ -33,6 +33,10 @@ export interface IGoodsReceipt extends Document {
   items: IGoodsReceiptItem[];
   overallCondition: GrnOverallCondition;
   remarks?: string;
+  // Phase 12 — set once a Goods Handover record is created for this receipt (only when the
+  // Requirement's routingHistory shows Admin as a pass-through). Mirrors how
+  // `PurchaseOrder.goodsReceipt` is denormalized once a Goods Receipt is recorded.
+  goodsHandover?: Types.ObjectId;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -70,6 +74,7 @@ const goodsReceiptSchema = new Schema<IGoodsReceipt>(
     items:          { type: [goodsReceiptItemSchema], required: true },
     overallCondition: { type: String, enum: Object.values(GRN_OVERALL_CONDITION), required: true },
     remarks:        { type: String, trim: true },
+    goodsHandover:  { type: Schema.Types.ObjectId, ref: 'GoodsHandover' },
     isDeleted:      { type: Boolean, default: false },
   },
   { timestamps: true },

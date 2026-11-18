@@ -19,11 +19,11 @@ export const requirementItemSchema = z.object({
 });
 
 // `department` and `createdBy` are deliberately absent — both are always derived
-// server-side from the authenticated department_user, never trusted from the body
-// (same idiom as createQuotationSchema). `targetDepartment` is the one deliberate escape
-// hatch: a Department User may route the requirement to a *different* department (e.g. an
-// IT user requesting furniture routes to Admin) — requirement.service.ts validates it against
-// the active department list before trusting it.
+// server-side from the authenticated department_user, never trusted from the body (same
+// idiom as createQuotationSchema). A Requirement always starts in the creator's own
+// department now — Phase 12 removed the old `targetDepartment` create-time escape hatch;
+// routing elsewhere only ever happens afterward, via the HOD-driven forward action (see
+// requirementService.forward). See docs/PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md.
 //
 // `title`, `budget`, and `requiredDate` are all optional: the requester shouldn't have to set
 // a budget upfront (that's decided later, against actual quotations) or write a title (derived
@@ -37,7 +37,6 @@ export const createRequirementSchema = z.object({
   requiredDate: z.coerce.date().optional(),
   remarks: z.string().trim().max(1000).optional(),
   items: z.array(requirementItemSchema).min(1, 'At least one item is required'),
-  targetDepartment: objectId.optional(),
 });
 
 export const updateRequirementSchema = createRequirementSchema.partial();
@@ -55,6 +54,15 @@ export const setPreparedQuotationSchema = z.object({
   prepared: z.boolean(),
 });
 
+// Phase 12 — forward a Requirement (at the HOD_REVIEW gate) to a different department.
+// `toDepartment` is validated against the active department list, and against the
+// one-shot-per-department / not-the-current-department rules, in requirement.service.ts.
+export const forwardRequirementSchema = z.object({
+  toDepartment: objectId,
+  remarks: z.string().trim().max(1000).optional(),
+});
+
 export type CreateRequirementInput = z.infer<typeof createRequirementSchema>;
 export type UpdateRequirementInput = z.infer<typeof updateRequirementSchema>;
 export type SetPreparedQuotationInput = z.infer<typeof setPreparedQuotationSchema>;
+export type ForwardRequirementInput = z.infer<typeof forwardRequirementSchema>;

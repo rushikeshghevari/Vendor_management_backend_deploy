@@ -5,7 +5,7 @@ import { REQUIREMENT_STATUS } from '@/constants/status';
 import { Department } from '@/modules/department/department.model';
 import { AI_PLACEHOLDER_VENDOR_NAME, Quotation } from '@/modules/quotation/quotation.model';
 import { Requirement } from '@/modules/requirement/requirement.model';
-import type { CreateRequirementInput, SetPreparedQuotationInput, UpdateRequirementInput } from '@/modules/requirement/requirement.validation';
+import type { CreateRequirementInput, ForwardRequirementInput, SetPreparedQuotationInput, UpdateRequirementInput } from '@/modules/requirement/requirement.validation';
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
 import { escapeRegex } from '@/utils/escapeRegex';
@@ -69,11 +69,15 @@ function routedIntoOwnDepartment(actor: Actor): Record<string, unknown> {
 
 /**
  * Read-visibility filter — a Department User sees requirements they personally created, plus
- * any routed into their own department by another department's user (see `targetDepartment`
- * in requirement.validation.ts) — once routed, the receiving department owns it operationally
- * even though someone else originally requested it. A same-department co-worker's own
- * requirement stays invisible, same as before this existed. An HOD sees every requirement in
- * their department (read-only per Phase 1 — see docs/PHASE1_REQUIREMENT_MODULE.md); a Director
+ * any routed into their own department via a Phase 12 forward (`requirementService.forward`)
+ * — once routed, the receiving department owns it operationally even though someone else
+ * originally requested it. A same-department co-worker's own
+ * requirement stays invisible, same as before this existed. An HOD sees every requirement
+ * currently in their department (read-only per Phase 1 — see docs/PHASE1_REQUIREMENT_MODULE.md),
+ * plus any requirement their department has ever forwarded or received via a Phase 12 forward
+ * (`routingHistory.fromDepartment`/`toDepartment`) — without this, the HOD who forwards a
+ * requirement away loses the ability to view it (and its own Routing History) the instant the
+ * forward succeeds, which defeats the purpose of recording that history at all. A Director
  * sees everything (read-only, no scoping — will narrow to "awaiting comparison" once that step
  * exists); Super Admin sees everything.
  */
@@ -81,7 +85,13 @@ function scopeToOwner(actor: Actor, filter: Record<string, unknown>): void {
   if (actor.role === ROLES.DEPARTMENT_USER) {
     addAndCondition(filter, { $or: [{ createdBy: actor.id }, routedIntoOwnDepartment(actor)] });
   } else if (actor.role === ROLES.HOD) {
-    filter.department = actor.department;
+    addAndCondition(filter, {
+      $or: [
+        { department: actor.department },
+        { 'routingHistory.fromDepartment': actor.department },
+        { 'routingHistory.toDepartment': actor.department },
+      ],
+    });
   }
 }
 
@@ -118,18 +128,9 @@ export const requirementService = {
       throw ApiError.badRequest('You must belong to a department to create a requirement');
     }
 
-    // Defaults to the requester's own department; `targetDepartment` lets them route it to a
-    // different one instead (e.g. an IT user requesting furniture routes to Admin) — any active
-    // department is a valid target.
-    let department = actor.department;
-    if (input.targetDepartment) {
-      const targetDept = await Department.findOne({
-        _id: input.targetDepartment,
-        isActive: true,
-      }).select('_id');
-      if (!targetDept) throw ApiError.badRequest('Selected department is not a valid requirement target');
-      department = targetDept.id;
-    }
+    // Phase 12 — always the requester's own department now; routing elsewhere only ever
+    // happens afterward, via the HOD-driven forward action (requirementService.forward).
+    const department = actor.department;
 
     const requirementNumber = await generateRequirementCode(department);
 
@@ -145,7 +146,7 @@ export const requirementService = {
       };
     });
 
-    const { targetDepartment: _targetDepartment, title, budget, requiredDate, ...rest } = input;
+    const { title, budget, requiredDate, ...rest } = input;
 
     return Requirement.create({
       ...rest,
@@ -224,7 +225,10 @@ export const requirementService = {
     const requirement = await Requirement.findOne(filter)
       .populate('department', 'name code')
       .populate({ path: 'createdBy', select: 'name email department', populate: { path: 'department', select: 'name' } })
-      .populate('submittedBy', 'name email');
+      .populate('submittedBy', 'name email')
+      .populate('routingHistory.fromDepartment', 'name code')
+      .populate('routingHistory.toDepartment', 'name code')
+      .populate('routingHistory.forwardedBy', 'name');
 
     if (!requirement) throw ApiError.notFound('Requirement not found');
     return requirement;
@@ -261,6 +265,11 @@ export const requirementService = {
     return requirement;
   },
 
+  /**
+   * Phase 12 — a Draft requirement now moves to the mandatory HOD_REVIEW gate, not straight to
+   * SUBMITTED. `submittedAt`/`submittedBy` are set here exactly as before; the HOD's own
+   * accept/forward decision is recorded separately (see `hodAccept`/`forward` below).
+   */
   async submit(id: string, actor: Actor) {
     if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
       throw ApiError.forbidden('Only a Department User can submit a requirement');
@@ -268,7 +277,7 @@ export const requirementService = {
 
     const requirement = await Requirement.findOneAndUpdate(
       { _id: id, ...ownershipFilter(actor), status: REQUIREMENT_STATUS.DRAFT, isDeleted: { $ne: true } },
-      { status: REQUIREMENT_STATUS.SUBMITTED, submittedAt: new Date(), submittedBy: actor.id },
+      { status: REQUIREMENT_STATUS.HOD_REVIEW, submittedAt: new Date(), submittedBy: actor.id },
       { new: true },
     )
       .populate('department', 'name hod')
@@ -281,8 +290,154 @@ export const requirementService = {
   },
 
   /**
+   * Phase 12 — the current owning department's HOD accepts the requirement at the mandatory
+   * gate: it stays in this department and moves to SUBMITTED, at which point everything
+   * downstream (quotation collection unlocking on the first quotation added — see
+   * quotation.service.ts's `createForRequirement`) behaves exactly as it did before this
+   * phase. The alternative to accepting is `forward`, below.
+   */
+  async hodAccept(id: string, actor: Actor) {
+    if (actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only the owning department\'s HOD or Super Admin can accept a requirement');
+    }
+
+    const filter: Record<string, unknown> = {
+      _id: id,
+      status: REQUIREMENT_STATUS.HOD_REVIEW,
+      isDeleted: { $ne: true },
+    };
+    if (actor.role === ROLES.HOD) filter.department = actor.department;
+
+    const requirement = await Requirement.findOneAndUpdate(
+      filter,
+      { status: REQUIREMENT_STATUS.SUBMITTED, hodAcceptedBy: actor.id, hodAcceptedAt: new Date() },
+      { new: true },
+    )
+      .populate('department', 'name hod')
+      .populate('createdBy', 'name')
+      .populate('submittedBy', 'name');
+    if (!requirement) {
+      throw ApiError.notFound('Requirement not found, or it is not awaiting your department\'s review');
+    }
+    return requirement;
+  },
+
+  /**
+   * Phase 12 — the alternative to accepting at the HOD_REVIEW gate: hand the requirement off
+   * to a different department instead of working it here. Each department may do this at most
+   * once while it owns the requirement (checked against `routingHistory` below) — a one-shot
+   * action per hand-off, not a general re-forward mechanism. The receiving department re-enters
+   * the same HOD_REVIEW gate, so chains of any length are possible, each hop consuming that
+   * department's own one-time forward. See docs/PHASE12_DEPARTMENT_ROUTING_AND_GOODS_HANDOVER.md.
+   */
+  async forward(id: string, input: ForwardRequirementInput, actor: Actor) {
+    if (actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only the owning department\'s HOD or Super Admin can forward a requirement');
+    }
+
+    const filter: Record<string, unknown> = {
+      _id: id,
+      status: REQUIREMENT_STATUS.HOD_REVIEW,
+      isDeleted: { $ne: true },
+    };
+    if (actor.role === ROLES.HOD) filter.department = actor.department;
+
+    const requirement = await Requirement.findOne(filter);
+    if (!requirement) {
+      throw ApiError.notFound('Requirement not found, or it is not awaiting your department\'s review');
+    }
+
+    const currentDepartment = requirement.department.toString();
+    if (input.toDepartment === currentDepartment) {
+      throw ApiError.badRequest('Cannot forward a requirement to the department that already owns it');
+    }
+
+    const alreadyForwardedByThisDept = requirement.routingHistory.some(
+      (entry) => entry.fromDepartment.toString() === currentDepartment,
+    );
+    if (alreadyForwardedByThisDept) {
+      throw ApiError.conflict('This department has already forwarded this requirement once — use the edit action to correct the target instead');
+    }
+
+    const targetDept = await Department.findOne({ _id: input.toDepartment, isActive: true }).select('_id');
+    if (!targetDept) throw ApiError.badRequest('Selected department is not a valid requirement target');
+
+    requirement.routingHistory.push({
+      fromDepartment: requirement.department,
+      toDepartment: targetDept._id as typeof requirement.department,
+      forwardedBy: new Types.ObjectId(actor.id),
+      forwardedAt: new Date(),
+    });
+    requirement.department = targetDept._id as typeof requirement.department;
+    // Stays at HOD_REVIEW — the receiving department's HOD must accept or forward it too.
+    await requirement.save();
+    await requirement.populate([
+      { path: 'department', select: 'name hod' },
+      { path: 'createdBy', select: 'name' },
+      { path: 'submittedBy', select: 'name' },
+      { path: 'routingHistory.fromDepartment', select: 'name code' },
+      { path: 'routingHistory.toDepartment', select: 'name code' },
+      { path: 'routingHistory.forwardedBy', select: 'name' },
+    ]);
+
+    return requirement;
+  },
+
+  /**
+   * Phase 12 — corrects the *most recent* routingHistory entry's target department, for when
+   * the wrong one was picked by mistake. No time/action deadline for now (confirmed decision)
+   * — stays editable as long as the requirement is still sitting at HOD_REVIEW with that entry
+   * as its latest (i.e. the mistakenly-targeted department hasn't itself accepted or forwarded
+   * it onward yet). Only the department that made the original forward (or Super Admin) may
+   * correct it — not the mistakenly-targeted department.
+   */
+  async forwardEdit(id: string, input: ForwardRequirementInput, actor: Actor) {
+    if (actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only the forwarding department\'s HOD or Super Admin can edit a forward');
+    }
+
+    const requirement = await Requirement.findOne({
+      _id: id,
+      status: REQUIREMENT_STATUS.HOD_REVIEW,
+      isDeleted: { $ne: true },
+    });
+    if (!requirement) {
+      throw ApiError.notFound('Requirement not found, or it is not awaiting review');
+    }
+
+    const latestEntry = requirement.routingHistory[requirement.routingHistory.length - 1];
+    if (!latestEntry) {
+      throw ApiError.badRequest('This requirement has never been forwarded — nothing to edit');
+    }
+    if (actor.role === ROLES.HOD && latestEntry.fromDepartment.toString() !== actor.department) {
+      throw ApiError.forbidden('Only the department that made this forward can edit it');
+    }
+    if (input.toDepartment === latestEntry.fromDepartment.toString()) {
+      throw ApiError.badRequest('Cannot forward a requirement to the department that already owns it');
+    }
+
+    const targetDept = await Department.findOne({ _id: input.toDepartment, isActive: true }).select('_id');
+    if (!targetDept) throw ApiError.badRequest('Selected department is not a valid requirement target');
+
+    latestEntry.toDepartment = targetDept._id as typeof latestEntry.toDepartment;
+    latestEntry.editedAt = new Date();
+    requirement.department = targetDept._id as typeof requirement.department;
+    await requirement.save();
+    await requirement.populate([
+      { path: 'department', select: 'name hod' },
+      { path: 'createdBy', select: 'name' },
+      { path: 'submittedBy', select: 'name' },
+      { path: 'routingHistory.fromDepartment', select: 'name code' },
+      { path: 'routingHistory.toDepartment', select: 'name code' },
+      { path: 'routingHistory.forwardedBy', select: 'name' },
+    ]);
+
+    return requirement;
+  },
+
+  /**
    * The department currently working the requirement — a Department User or HOD, either its
-   * own or (if routed via targetDepartment) the receiving department's — explicitly hands it
+   * own or (if routed via a Phase 12 forward) the receiving department's — explicitly hands it
    * over to the Director. The only way a requirement ever enters Director Review from here on.
    * Locks quotation upload (see the `createForRequirement` status gate in quotation.service.ts)
    * and is the trigger point for the `requirement_ready_for_review` notification (moved here

@@ -409,7 +409,7 @@ export const quotationService = {
 
     // A plain Department User may only add quotations to their own requirement — unless it was
     // routed into their department from elsewhere (requestedByDepartment differs from their own
-    // department; see targetDepartment in requirement.validation.ts), in which case the whole
+    // department; see requirementService.forward, Phase 12), in which case the whole
     // receiving department now owns it operationally, same as HOD already could regardless.
     const isRoutedIn = requirement.requestedByDepartment.toString() !== actor.department;
     if (actor.role === ROLES.DEPARTMENT_USER && requirement.createdBy.toString() !== actor.id && !isRoutedIn) {
