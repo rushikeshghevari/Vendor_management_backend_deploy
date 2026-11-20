@@ -121,8 +121,8 @@ function departmentWriteFilter(actor: Actor): Record<string, unknown> {
 
 export const requirementService = {
   async create(input: CreateRequirementInput, actor: Actor) {
-    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
-      throw ApiError.forbidden('Only a Department User can create a requirement');
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can create a requirement');
     }
     if (!actor.department) {
       throw ApiError.badRequest('You must belong to a department to create a requirement');
@@ -235,8 +235,8 @@ export const requirementService = {
   },
 
   async update(id: string, input: UpdateRequirementInput, actor: Actor) {
-    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
-      throw ApiError.forbidden('Only a Department User can edit a requirement');
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can edit a requirement');
     }
 
     const items = input.items?.map((item) => {
@@ -271,8 +271,8 @@ export const requirementService = {
    * accept/forward decision is recorded separately (see `hodAccept`/`forward` below).
    */
   async submit(id: string, actor: Actor) {
-    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
-      throw ApiError.forbidden('Only a Department User can submit a requirement');
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can submit a requirement');
     }
 
     const requirement = await Requirement.findOneAndUpdate(
@@ -515,8 +515,8 @@ export const requirementService = {
 
   /** Soft delete — Draft only, per the Draft business rules (mirrors quotationService.remove). */
   async remove(id: string, actor: Actor) {
-    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.SUPER_ADMIN) {
-      throw ApiError.forbidden('Only a Department User can delete a requirement');
+    if (actor.role !== ROLES.DEPARTMENT_USER && actor.role !== ROLES.HOD && actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden('Only a Department User or HOD can delete a requirement');
     }
 
     const requirement = await Requirement.findOneAndUpdate(

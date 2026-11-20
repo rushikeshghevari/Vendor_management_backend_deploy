@@ -70,11 +70,11 @@ router.use(authenticate);
  *       201: { description: Requirement created }
  *       400: { description: Validation failed, content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } } }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  */
 router.post(
   '/',
-  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
+  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER, ROLES.HOD),
   validate({ body: createRequirementSchema }),
   requirementController.create,
 );
@@ -146,12 +146,12 @@ router.get('/:id', validate({ params: mongoIdParamSchema() }), requirementContro
  *       200: { description: Requirement updated }
  *       400: { description: Validation failed }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  *       404: { description: Requirement not found, or it is no longer editable }
  */
 router.put(
   '/:id',
-  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
+  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER, ROLES.HOD),
   validate({ params: mongoIdParamSchema(), body: updateRequirementSchema }),
   requirementController.update,
 );
@@ -171,12 +171,12 @@ router.put(
  *       200: { description: Requirement deleted }
  *       400: { description: Invalid id format }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  *       404: { description: Requirement not found, or only a Draft requirement can be deleted }
  */
 router.delete(
   '/:id',
-  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
+  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER, ROLES.HOD),
   validate({ params: mongoIdParamSchema() }),
   requirementController.remove,
 );
@@ -195,12 +195,12 @@ router.delete(
  *     responses:
  *       200: { description: Requirement submitted }
  *       401: { description: Missing or invalid access token }
- *       403: { description: Caller is not a Department User or Super Admin }
+ *       403: { description: Caller is not a Department User, HOD, or Super Admin }
  *       404: { description: Requirement not found, or it is not in Draft status }
  */
 router.patch(
   '/:id/submit',
-  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER),
+  authorize(ROLES.SUPER_ADMIN, ROLES.DEPARTMENT_USER, ROLES.HOD),
   validate({ params: mongoIdParamSchema() }),
   requirementController.submit,
 );
