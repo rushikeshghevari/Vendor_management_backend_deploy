@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { ROLES, type Role } from '@/constants/roles';
-import { BILL_STATUS, QUOTATION_STATUS, PAYMENT_STATUS, type BillStatus } from '@/constants/status';
+import { AI_RECOMMENDATION, AI_RISK, BILL_STATUS, QUOTATION_STATUS, PAYMENT_STATUS, type BillStatus } from '@/constants/status';
 import { Bill, type IBill } from '@/modules/bill/bill.model';
 import { Payment } from '@/modules/payment/payment.model';
 import type {
@@ -21,6 +21,7 @@ import { Quotation } from '@/modules/quotation/quotation.model';
 import { quotationService } from '@/modules/quotation/quotation.service';
 import { RECURRING_MODE } from '@/constants/status';
 import { RecurringExpense } from '@/modules/recurringExpense/recurringExpense.model';
+import { settingService } from '@/modules/setting/setting.service';
 import { User } from '@/modules/user/user.model';
 import { runAiVerification } from '@/services/ai/aiVerification.service';
 import type { Actor } from '@/types/actor';
@@ -46,15 +47,31 @@ const PAYMENT_TRANSITIONS: Record<string, BillStatus> = {
 
 // ── Role-based visibility ──────────────────────────────────────────────────────
 
+export type BillApprovalRoute = 'ceo' | 'directors';
+
+/** Amount <= the configured CEO Approval Limit routes a recurring-expense threshold breach to
+ *  the CEO alone; above it, the full active-Director roster must approve — same convention as
+ *  Quotation's approval routing. An ordinary (non-recurring) Bill reaching the Financial
+ *  Approval gate (always via a mismatch hold, never via amount) is always a Director decision —
+ *  the CEO Approval Limit only ever applies to recurring cycles. */
+export function resolveBillApprovalRoute(bill: IBill, ceoApprovalLimit: number): BillApprovalRoute {
+  if (!bill.recurringExpense) return 'directors';
+  return bill.invoiceAmount <= ceoApprovalLimit ? 'ceo' : 'directors';
+}
+
 /**
  * Scopes the bill query to what each role should see:
  *  - Department User: only their own bills (all statuses).
- *  - Director: bills waiting for their Financial Approval (AI_VERIFIED) + any they already decided.
+ *  - Director: bills waiting for their Financial Approval (AI_VERIFIED) + any they already
+ *    decided — excludes a recurring bill currently routed to the CEO (amount within the CEO
+ *    Approval Limit), which only ever shows up in the CEO's own list below.
+ *  - CEO: only a recurring-expense bill that breached its threshold and is within the CEO
+ *    Approval Limit — an ordinary bill never routes here.
  *  - Accounts: bills the Director has approved — never the pre-approval stages.
  *  - Payment Department: bills ready for/in payment.
  *  - Super Admin: all bills (no filter).
  */
-function scopeToOwner(actor: Actor, filter: Record<string, unknown>) {
+function scopeToOwner(actor: Actor, filter: Record<string, unknown>, ceoApprovalLimit: number) {
   if (actor.role === ROLES.DEPARTMENT_USER) {
     filter.createdBy = actor.id;
   } else if (actor.role === ROLES.HOD) {
@@ -74,6 +91,25 @@ function scopeToOwner(actor: Actor, filter: Record<string, unknown>) {
         BILL_STATUS.DIRECTOR_REJECTED,
         BILL_STATUS.DIRECTOR_CORRECTION,
         BILL_STATUS.CORRECTION_REQUESTED,
+        BILL_STATUS.VERIFIED,
+        BILL_STATUS.PAYMENT_PENDING,
+        BILL_STATUS.PAID,
+        BILL_STATUS.COMPLETED,
+      ],
+    };
+    filter.$or = [
+      { recurringExpense: { $exists: false } },
+      { invoiceAmount: { $gt: ceoApprovalLimit } },
+    ];
+  } else if (actor.role === ROLES.CEO) {
+    filter.recurringExpense = { $exists: true };
+    filter.invoiceAmount = { $lte: ceoApprovalLimit };
+    filter.status = {
+      $in: [
+        BILL_STATUS.AI_VERIFIED,
+        BILL_STATUS.DIRECTOR_APPROVED,
+        BILL_STATUS.DIRECTOR_REJECTED,
+        BILL_STATUS.DIRECTOR_CORRECTION,
         BILL_STATUS.VERIFIED,
         BILL_STATUS.PAYMENT_PENDING,
         BILL_STATUS.PAID,
@@ -232,12 +268,99 @@ async function runAiPipelineForBill(bill: IBill, actor: Actor): Promise<void> {
     po.bill = bill._id as unknown as typeof po.bill;
     await po.save();
 
-    // Goes straight to DIRECTOR_APPROVED, skipping the AI_VERIFIED "awaiting Director Financial
-    // Approval" wait state entirely — a Director already approved this vendor/quotation at the
-    // Requirement stage (see directorReviewService.decide()), so a second Director gate here was
-    // redundant. `decideFinancialApproval()` is left in place (unreachable in the normal flow
-    // now, since no bill ever sits at AI_VERIFIED) rather than removed, in case a Super Admin
-    // ever needs the manual override path back.
+    // Bill amount must track the selected Quotation's own approved amount closely (₹1
+    // tolerance for GST paisa rounding) — a PO's grandTotal can legitimately drift from it
+    // (items are re-entered at PO-generation time), so this check is independent of (and
+    // stricter than) the PO-vs-Bill rule engine comparison that produced aiResult above.
+    const quotationAmountMismatch = !!quotation && Math.abs(quotation.amount - bill.invoiceAmount) > 1;
+    const aiFlaggedMismatch = aiResult.recommendation === AI_RECOMMENDATION.REJECT || aiResult.risk === AI_RISK.HIGH;
+    const isBlocked = aiFlaggedMismatch || quotationAmountMismatch;
+
+    // Normally goes straight to DIRECTOR_APPROVED, skipping the AI_VERIFIED "awaiting Director
+    // Financial Approval" wait state entirely — a Director already approved this vendor/
+    // quotation at the Requirement stage (see directorReviewService.decide()), so a second
+    // Director gate here is redundant *for a clean match*. `decideFinancialApproval()` is the
+    // escape valve for the one case that still needs it: see isBlocked below.
+    if (isBlocked) {
+      const blockReason = quotationAmountMismatch
+        ? `Bill amount (₹${bill.invoiceAmount.toLocaleString('en-IN')}) does not match the Quotation amount (₹${quotation!.amount.toLocaleString('en-IN')})`
+        : `AI flagged this bill ${aiResult.risk} risk (${aiResult.recommendation}) — ${aiResult.recommendation === AI_RECOMMENDATION.REJECT ? 'critical mismatch detected' : 'manual review required'}`;
+
+      await Bill.findByIdAndUpdate(billId, {
+        status: BILL_STATUS.AI_VERIFIED,
+        aiPipelineRunning: false,
+        purchaseOrder: po._id,
+        aiMatchPercentage: aiResult.matchPercentage,
+        aiRisk: aiResult.risk,
+        aiRecommendation: aiResult.recommendation,
+        aiVerifiedAt: aiResult.verifiedAt,
+        $unset: { aiFailureReason: 1 },
+        $push: {
+          history: {
+            event: 'ai_verified', status: BILL_STATUS.AI_VERIFIED,
+            remarks: `On hold — ${blockReason}. Awaiting Director Financial Approval.`,
+            actorId: actor.id, actorRole: actor.role, at: aiResult.verifiedAt,
+            meta: { matchPercentage: aiResult.matchPercentage, risk: aiResult.risk, recommendation: aiResult.recommendation, provider: aiResult.aiProvider },
+          },
+        },
+      });
+
+      activityLogService.record(
+        {
+          action: 'ai_completed', targetId: billId, targetType: 'Bill', department: bill.department.toString(),
+          newValue: { matchPercentage: aiResult.matchPercentage, risk: aiResult.risk, recommendation: aiResult.recommendation, onHold: true },
+        },
+        actor,
+      ).catch(() => null);
+
+      const [directors, ceos, superAdmins, accountsUsers, paymentUsers] = await Promise.all([
+        notificationService.findActiveUsersByRole(ROLES.DIRECTOR),
+        notificationService.findActiveUsersByRole(ROLES.CEO),
+        notificationService.findActiveUsersByRole(ROLES.SUPER_ADMIN),
+        notificationService.findActiveUsersByRole(ROLES.ACCOUNTS),
+        notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT),
+      ]);
+
+      const actionRecipients = [...directors, ...ceos, ...superAdmins];
+      if (actionRecipients.length > 0) {
+        await notificationService.notifyUsers(actionRecipients, {
+          title: 'Bill On Hold — Mismatch Detected',
+          message: `Bill ${bill.billCode} is on hold: ${blockReason}. Please review and decide.`,
+          module: 'bill',
+          relatedRecord: billId,
+          notificationType: 'ai_high_risk_alert',
+          sender: actor.id,
+        });
+      }
+
+      // Accounts/Payment never act on a held bill, but submit() already told them to expect
+      // it — tell them it's delayed so neither chases a bill that was never actually forwarded.
+      const fyiRecipients = [...accountsUsers, ...paymentUsers];
+      if (fyiRecipients.length > 0) {
+        await notificationService.notifyUsers(fyiRecipients, {
+          title: 'Bill On Hold',
+          message: `Bill ${bill.billCode} is on hold pending Director review (${blockReason}) — it has not reached your queue yet.`,
+          module: 'bill',
+          relatedRecord: billId,
+          notificationType: 'ai_high_risk_alert',
+          sender: actor.id,
+        });
+      }
+
+      await notificationService.notifyUser(
+        { id: bill.createdBy.toString(), role: ROLES.DEPARTMENT_USER },
+        {
+          title: 'Bill On Hold — Mismatch Detected',
+          message: `Your bill ${bill.billCode} is on hold: ${blockReason}. A Director will review it.`,
+          module: 'bill',
+          relatedRecord: billId,
+          notificationType: 'bill_ai_blocked',
+          sender: actor.id,
+        },
+      );
+      return;
+    }
+
     await Bill.findByIdAndUpdate(billId, {
       status: BILL_STATUS.DIRECTOR_APPROVED,
       aiPipelineRunning: false,
@@ -308,22 +431,6 @@ async function runAiPipelineForBill(bill: IBill, actor: Actor): Promise<void> {
         notificationType: 'bill_financial_approved',
         sender: actor.id,
       });
-    }
-
-    // Extra HIGH-risk alert to Directors + CEO + Super Admins
-    if (aiResult.risk === 'HIGH') {
-      const superAdmins = await notificationService.findActiveUsersByRole(ROLES.SUPER_ADMIN);
-      const alertRecipients = [...directors, ...ceos, ...superAdmins];
-      if (alertRecipients.length > 0) {
-        await notificationService.notifyUsers(alertRecipients, {
-          title: 'High Risk Bill Alert',
-          message: `Bill ${bill.billCode} flagged HIGH RISK by AI. Recommendation: ${aiResult.recommendation}. Immediate review required.`,
-          module: 'bill',
-          relatedRecord: billId,
-          notificationType: 'ai_high_risk_alert',
-          sender: actor.id,
-        });
-      }
     }
 
     // Notify bill owner of AI completion
@@ -469,15 +576,21 @@ async function processRecurringBillPipeline(bill: IBill, actor: Actor): Promise<
         $push: {
           history: {
             event: 'ai_verified', status: BILL_STATUS.AI_VERIFIED,
-            remarks: `Recurring expense (${series.title}) — ${increasePercent.toFixed(1)}% over baseline (threshold ${series.thresholdPercent}%). Needs Director approval before payment.`,
+            remarks: `Recurring expense (${series.title}) — ${increasePercent.toFixed(1)}% over baseline (threshold ${series.thresholdPercent}%). Needs approval before payment.`,
             actorId: actor.id, actorRole: actor.role, at: now,
           },
         },
       });
 
-      const directors = await notificationService.findActiveUsersByRole(ROLES.DIRECTOR);
-      if (directors.length > 0) {
-        await notificationService.notifyUsers(directors, {
+      // Amount <= the CEO Approval Limit routes this breach to the CEO alone; above it, the
+      // full active-Director roster must approve — same split as a recurring bill's eventual
+      // decideFinancialApproval() gate (resolveBillApprovalRoute).
+      const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+      const route = resolveBillApprovalRoute(bill, ceoApprovalLimit);
+      const approverRoleLabel = route === 'ceo' ? 'CEO' : 'Director';
+      const approvers = await notificationService.findActiveUsersByRole(route === 'ceo' ? ROLES.CEO : ROLES.DIRECTOR);
+      if (approvers.length > 0) {
+        await notificationService.notifyUsers(approvers, {
           title: 'Recurring Bill Needs Approval',
           message: `Bill ${bill.billCode} (${series.title}) is ${increasePercent.toFixed(1)}% over its approved baseline — please review.`,
           module: 'bill', relatedRecord: billId, notificationType: 'ai_high_risk_alert', sender: actor.id,
@@ -486,8 +599,8 @@ async function processRecurringBillPipeline(bill: IBill, actor: Actor): Promise<
       await notificationService.notifyUser(
         { id: bill.createdBy.toString(), role: ROLES.DEPARTMENT_USER },
         {
-          title: 'Recurring Bill Awaiting Director Approval',
-          message: `Bill ${bill.billCode} (${series.title}) is ${increasePercent.toFixed(1)}% over the approved baseline, so a Director must approve it before it can be paid.`,
+          title: `Recurring Bill Awaiting ${approverRoleLabel} Approval`,
+          message: `Bill ${bill.billCode} (${series.title}) is ${increasePercent.toFixed(1)}% over the approved baseline, so the ${approverRoleLabel} must approve it before it can be paid.`,
           module: 'bill', relatedRecord: billId, notificationType: 'bill_ai_verified', sender: actor.id,
         },
       );
@@ -734,7 +847,8 @@ export const billService = {
       filter.invoiceDate = invoiceDate;
     }
 
-    scopeToOwner(actor, filter);
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    scopeToOwner(actor, filter, ceoApprovalLimit);
 
     const [items, total] = await Promise.all([
       Bill.find(filter)
@@ -760,7 +874,8 @@ export const billService = {
 
   async getById(id: string, actor: Actor) {
     const filter: Record<string, unknown> = { _id: id, isDeleted: { $ne: true } };
-    scopeToOwner(actor, filter);
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    scopeToOwner(actor, filter, ceoApprovalLimit);
 
     const bill = await Bill.findOne(filter)
       .populate('vendor')
@@ -787,17 +902,20 @@ export const billService = {
     const poTotal = (bill.purchaseOrder as any)?.grandTotal || 0;
     const outstandingBalance = poTotal ? (poTotal - paidAmount) : 0;
 
-    // Fetch all active directors
-    const activeDirectors = await User.find({ role: ROLES.DIRECTOR, isActive: true }).select('name isActive role createdAt').lean();
+    // Fetch the active roster for this bill's resolved route (CEO alone for a recurring bill
+    // within the CEO Approval Limit, otherwise the full active-Director committee).
+    const approvalRoute = resolveBillApprovalRoute(bill, ceoApprovalLimit);
+    const routeRole = approvalRoute === 'ceo' ? ROLES.CEO : ROLES.DIRECTOR;
+    const activeApprovers = await User.find({ role: routeRole, isActive: true }).select('name isActive role createdAt').lean();
     const decidedByDirectorId = new Map(bill.directorApprovals.map((entry) => [entry.directorId.toString(), entry]));
-    const roster = activeDirectors
-      .filter((dir) => dir.isActive || decidedByDirectorId.has(String(dir._id)))
-      .map((dir) => {
-        const entry = decidedByDirectorId.get(String(dir._id));
+    const roster = activeApprovers
+      .filter((u) => u.isActive || decidedByDirectorId.has(String(u._id)))
+      .map((u) => {
+        const entry = decidedByDirectorId.get(String(u._id));
         return {
-          directorId: dir._id,
-          directorName: dir.name,
-          directorCreatedAt: dir.createdAt,
+          directorId: u._id,
+          directorName: u.name,
+          directorCreatedAt: u.createdAt,
           decision: entry?.decision ?? 'pending',
           remarks: entry?.remarks,
           decidedAt: entry?.decidedAt ?? null,
@@ -816,6 +934,7 @@ export const billService = {
       paidAmount,
       outstandingBalance,
       directorApprovals: roster,
+      approvalRoute,
     });
   },
 
@@ -1038,17 +1157,26 @@ export const billService = {
    * Only one Director needs to act (not a full roster like Quotation dual-Director approval).
    */
   async decideFinancialApproval(id: string, input: BillFinancialDecisionInput, actor: Actor) {
-    if (actor.role !== ROLES.DIRECTOR) {
-      throw ApiError.forbidden('Only a Director can make a financial approval decision on a bill');
-    }
-
     const bill = await Bill.findOne({
       _id: id,
       status: BILL_STATUS.AI_VERIFIED,
       isDeleted: { $ne: true },
     });
     if (!bill) {
-      throw ApiError.notFound('Bill not found, or it is not awaiting Director Financial Approval');
+      throw ApiError.notFound('Bill not found, or it is not awaiting Financial Approval');
+    }
+
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    const route = resolveBillApprovalRoute(bill, ceoApprovalLimit);
+    const routeRole = route === 'ceo' ? ROLES.CEO : ROLES.DIRECTOR;
+    const approverRoleLabel = route === 'ceo' ? 'CEO' : 'Director';
+
+    if (actor.role !== routeRole) {
+      throw ApiError.forbidden(
+        route === 'ceo'
+          ? `This bill is within the CEO Approval Limit (₹${ceoApprovalLimit.toLocaleString('en-IN')}) — only the CEO can decide on it`
+          : 'Only a Director can make a financial approval decision on this bill',
+      );
     }
 
     const now = new Date();
@@ -1070,17 +1198,17 @@ export const billService = {
       });
     }
 
-    // Fetch all active directors
-    const activeDirectors = await User.find({ role: ROLES.DIRECTOR, isActive: true }).select('name isActive role createdAt').lean();
-    const decidedByDirectorId = new Map(bill.directorApprovals.map((entry) => [entry.directorId.toString(), entry]));
-    const roster = activeDirectors
-      .filter((dir) => dir.isActive || decidedByDirectorId.has(String(dir._id)))
-      .map((dir) => {
-        const entry = decidedByDirectorId.get(String(dir._id));
+    // Fetch the active roster for this bill's resolved route
+    const activeApprovers = await User.find({ role: routeRole, isActive: true }).select('name isActive role createdAt').lean();
+    const decidedByApproverId = new Map(bill.directorApprovals.map((entry) => [entry.directorId.toString(), entry]));
+    const roster = activeApprovers
+      .filter((u) => u.isActive || decidedByApproverId.has(String(u._id)))
+      .map((u) => {
+        const entry = decidedByApproverId.get(String(u._id));
         return {
-          directorId: dir._id,
-          directorName: dir.name,
-          directorCreatedAt: dir.createdAt,
+          directorId: u._id,
+          directorName: u.name,
+          directorCreatedAt: u.createdAt,
           decision: entry?.decision ?? 'pending',
           remarks: entry?.remarks,
           decidedAt: entry?.decidedAt ?? null,
@@ -1115,9 +1243,9 @@ export const billService = {
 
     await bill.save();
 
-    // A recurring-expense bill has no PO/GRN for Accounts to 3-way-match against — once every
-    // Director has approved it, skip Accounts entirely and go straight to Verified (mirrors the
-    // "within threshold" auto-skip in processRecurringBillPipeline, for the same reason).
+    // A recurring-expense bill has no PO/GRN for Accounts to 3-way-match against — once the
+    // route's full roster has approved it, skip Accounts entirely and go straight to Verified
+    // (mirrors the "within threshold" auto-skip in processRecurringBillPipeline).
     if (newStatus === BILL_STATUS.DIRECTOR_APPROVED && bill.recurringExpense) {
       newStatus = BILL_STATUS.VERIFIED;
       bill.status = BILL_STATUS.VERIFIED;
@@ -1125,7 +1253,7 @@ export const billService = {
       bill.history.push({
         event: 'accounts_decision',
         status: BILL_STATUS.VERIFIED,
-        remarks: 'Recurring expense — Director-approved, auto-verified straight to Payment (no PO/GRN to match).',
+        remarks: `Recurring expense — ${approverRoleLabel}-approved, auto-verified straight to Payment (no PO/GRN to match).`,
         actorId: actor.id as unknown as IBill['createdBy'],
         actorName,
         actorRole: actor.role,
@@ -1143,7 +1271,7 @@ export const billService = {
           { id: ownerId, role: ROLES.DEPARTMENT_USER },
           {
             title: 'Bill Financially Rejected',
-            message: `Your bill ${bill.billCode} has been rejected by Director ${actorName}.${input.remarks ? ` Reason: ${input.remarks}` : ''}`,
+            message: `Your bill ${bill.billCode} has been rejected by ${approverRoleLabel} ${actorName}.${input.remarks ? ` Reason: ${input.remarks}` : ''}`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_financial_rejected',
@@ -1156,7 +1284,7 @@ export const billService = {
           { id: ownerId, role: ROLES.DEPARTMENT_USER },
           {
             title: 'Bill Correction Required',
-            message: `Director ${actorName} has requested corrections on bill ${bill.billCode}.${input.remarks ? ` Remarks: ${input.remarks}` : ''} Please update and resubmit.`,
+            message: `${approverRoleLabel} ${actorName} has requested corrections on bill ${bill.billCode}.${input.remarks ? ` Remarks: ${input.remarks}` : ''} Please update and resubmit.`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_director_correction_required',
@@ -1165,8 +1293,8 @@ export const billService = {
         );
       }
     } else if (input.decision === 'approved') {
-      const pendingDirectors = roster.filter((r) => r.decision === 'pending');
-      if (pendingDirectors.length > 0) {
+      const pendingApprovers = roster.filter((r) => r.decision === 'pending');
+      if (pendingApprovers.length > 0) {
         // Not fully approved yet
         const orderedRoster = [...roster].sort(
           (a, b) => new Date(a.directorCreatedAt).getTime() - new Date(b.directorCreatedAt).getTime(),
@@ -1177,7 +1305,7 @@ export const billService = {
           { id: ownerId, role: ROLES.DEPARTMENT_USER },
           {
             title: 'Bill Reviewed',
-            message: `Director ${approverIndex} approved bill ${bill.billCode}. Waiting for remaining Director.`,
+            message: `${approverRoleLabel} ${approverIndex} approved bill ${bill.billCode}. Waiting for remaining ${approverRoleLabel}.`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_financial_approved',
@@ -1186,10 +1314,10 @@ export const billService = {
         );
 
         await notificationService.notifyUsers(
-          pendingDirectors.map((entry) => ({ id: String(entry.directorId), role: ROLES.DIRECTOR })),
+          pendingApprovers.map((entry) => ({ id: String(entry.directorId), role: routeRole })),
           {
             title: 'Review Pending',
-            message: `Director ${actorName} completed the review on bill ${bill.billCode}. Your review is still pending.`,
+            message: `${approverRoleLabel} ${actorName} completed the review on bill ${bill.billCode}. Your review is still pending.`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_financial_approved',
@@ -1202,7 +1330,7 @@ export const billService = {
         const paymentUsers = await notificationService.findActiveUsersByRole(ROLES.PAYMENT_DEPARTMENT);
         await notificationService.notifyUsers(paymentUsers, {
           title: 'Recurring Bill Ready for Payment',
-          message: `Bill ${bill.billCode} has been approved by the Directors and is ready for payment.`,
+          message: `Bill ${bill.billCode} has been approved by the ${approverRoleLabel} and is ready for payment.`,
           module: 'bill',
           relatedRecord,
           notificationType: 'bill_financial_approved',
@@ -1213,7 +1341,7 @@ export const billService = {
           { id: ownerId, role: ROLES.DEPARTMENT_USER },
           {
             title: 'Bill Financially Approved',
-            message: `Your bill ${bill.billCode} has been approved by the Directors and sent straight to Payment.`,
+            message: `Your bill ${bill.billCode} has been approved by the ${approverRoleLabel} and sent straight to Payment.`,
             module: 'bill',
             relatedRecord,
             notificationType: 'bill_financial_approved',
@@ -1405,14 +1533,24 @@ export const billService = {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // A recurring bill within the CEO Approval Limit is routed to the CEO, not a Director (see
+    // resolveBillApprovalRoute) — excluded here the same way Quotation's getDirectorStats keeps
+    // a CEO-routed quotation out of a Director's counters.
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    const awaitingDirector = {
+      ...base,
+      status: BILL_STATUS.AI_VERIFIED,
+      $or: [{ recurringExpense: { $exists: false } }, { invoiceAmount: { $gt: ceoApprovalLimit } }],
+    };
+
     const [pendingFinancialApprovals, approvedToday, rejectedToday, correctionToday, highRiskBills, pendingAi, aiFailed] =
       await Promise.all([
-        Bill.countDocuments({ ...base, status: BILL_STATUS.AI_VERIFIED }),
+        Bill.countDocuments(awaitingDirector),
         Bill.countDocuments({ ...base, status: BILL_STATUS.DIRECTOR_APPROVED, directorFinancialAt: { $gte: today } }),
         Bill.countDocuments({ ...base, status: BILL_STATUS.DIRECTOR_REJECTED, directorFinancialAt: { $gte: today } }),
         Bill.countDocuments({ ...base, status: BILL_STATUS.DIRECTOR_CORRECTION, directorFinancialAt: { $gte: today } }),
         // High-risk AI-verified bills
-        Bill.countDocuments({ ...base, status: BILL_STATUS.AI_VERIFIED }),
+        Bill.countDocuments(awaitingDirector),
         // Powers the "Pending AI" Director Dashboard tab.
         Bill.countDocuments({ ...base, status: BILL_STATUS.SUBMITTED }),
         Bill.countDocuments({ ...base, status: BILL_STATUS.AI_FAILED }),
@@ -1599,7 +1737,8 @@ export const billService = {
    */
   async getTimeline(id: string, actor: Actor) {
     const filter: Record<string, unknown> = { _id: id, isDeleted: { $ne: true } };
-    scopeToOwner(actor, filter);
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    scopeToOwner(actor, filter, ceoApprovalLimit);
 
     const bill = await Bill.findOne(filter)
       .populate('history.actorId', 'name email')

@@ -1,8 +1,11 @@
 import { Bill, type IBill } from '@/modules/bill/bill.model';
+import { resolveBillApprovalRoute } from '@/modules/bill/bill.service';
 import { Payment } from '@/modules/payment/payment.model';
 import { PurchaseOrder, type IAiDifference, type IAiVerification, type IPurchaseOrder } from '@/modules/purchaseOrder/purchaseOrder.model';
 import { Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
+import { settingService } from '@/modules/setting/setting.service';
 import { User } from '@/modules/user/user.model';
+import { ROLES } from '@/constants/roles';
 import type { Actor } from '@/types/actor';
 import { ApiError } from '@/utils/ApiError';
 
@@ -226,7 +229,7 @@ async function buildTimeline(
 // ── Service ────────────────────────────────────────────────────────────────────
 
 export const directorService = {
-  async getBillReview(billId: string, _actor: Actor) {
+  async getBillReview(billId: string, actor: Actor) {
     const bill = await Bill.findOne({ _id: billId, isDeleted: { $ne: true } })
       .populate('vendor')
       .populate('reimbursedTo', 'name email')
@@ -291,17 +294,21 @@ export const directorService = {
 
     const approvedEntry = quotation?.directorApprovals?.find((a) => a.decision === 'approved');
 
-    // Fetch all active directors for the roster
-    const activeDirectors = await User.find({ role: 'director', isActive: true }).select('name isActive role createdAt').lean();
+    // Fetch the active roster for this bill's resolved route (CEO alone for a recurring bill
+    // within the CEO Approval Limit, otherwise the full active-Director committee).
+    const ceoApprovalLimit = await settingService.getCeoApprovalLimit();
+    const approvalRoute = resolveBillApprovalRoute(bill, ceoApprovalLimit);
+    const routeRole = approvalRoute === 'ceo' ? ROLES.CEO : ROLES.DIRECTOR;
+    const activeApprovers = await User.find({ role: routeRole, isActive: true }).select('name isActive role createdAt').lean();
     const decidedByDirectorId = new Map(bill.directorApprovals.map((entry) => [entry.directorId.toString(), entry]));
-    const roster = activeDirectors
-      .filter((dir) => dir.isActive || decidedByDirectorId.has(String(dir._id)))
-      .map((dir) => {
-        const entry = decidedByDirectorId.get(String(dir._id));
+    const roster = activeApprovers
+      .filter((u) => u.isActive || decidedByDirectorId.has(String(u._id)))
+      .map((u) => {
+        const entry = decidedByDirectorId.get(String(u._id));
         return {
-          directorId: dir._id,
-          directorName: dir.name,
-          directorCreatedAt: dir.createdAt,
+          directorId: u._id,
+          directorName: u.name,
+          directorCreatedAt: u.createdAt,
           decision: entry?.decision ?? 'pending',
           remarks: entry?.remarks,
           decidedAt: entry?.decidedAt ?? null,
@@ -404,7 +411,8 @@ export const directorService = {
         accountsDecisions: bill.decisionHistory,
       },
       recommendationBand: recommendationBand(aiVerification?.matchPercentage),
-      canDecide: bill.status === 'ai_verified',
+      approvalRoute,
+      canDecide: bill.status === 'ai_verified' && actor.role === routeRole,
       canTriggerAiVerification: !aiVerification && !!po,
     };
   },

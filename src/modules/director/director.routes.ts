@@ -52,7 +52,7 @@ router.use(authenticate);
  *         description: Missing, invalid, or expired access token
  *         content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
  *       403:
- *         description: Only a Director can access this review
+ *         description: Only a Director or CEO can access this review
  *         content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
  *       404:
  *         description: Bill not found
@@ -60,7 +60,7 @@ router.use(authenticate);
  */
 router.get(
   '/bills/:id/review',
-  authorize(ROLES.DIRECTOR),
+  authorize(ROLES.DIRECTOR, ROLES.CEO),
   validate({ params: mongoIdParamSchema() }),
   directorController.getBillReview,
 );

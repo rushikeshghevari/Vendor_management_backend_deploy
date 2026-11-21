@@ -717,15 +717,15 @@ router.patch(
  *         description: Missing, invalid, or expired access token
  *         content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
  *       403:
- *         description: Only a Director can make a financial approval decision on a bill
+ *         description: Only a Director (or, for a recurring bill within the CEO Approval Limit, the CEO) can make this decision
  *         content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
  *       404:
- *         description: Bill not found, or it is not awaiting Director Financial Approval
+ *         description: Bill not found, or it is not awaiting Financial Approval
  *         content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
  */
 router.patch(
   '/:id/financial-decision',
-  authorize(ROLES.DIRECTOR),
+  authorize(ROLES.DIRECTOR, ROLES.CEO),
   validate({ params: mongoIdParamSchema(), body: billFinancialDecisionSchema }),
   billController.decideFinancialApproval,
 );
