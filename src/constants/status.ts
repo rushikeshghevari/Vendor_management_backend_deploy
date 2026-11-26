@@ -85,6 +85,15 @@ export const PAYMENT_STATUS = {
 } as const;
 export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 
+// A Requirement's winning Quotation with advanceAmount > 0 — tracked separately from the
+// Bill/Payment lifecycle since the advance is due before any PO/Goods Receipt/Bill exists.
+export const ADVANCE_PAYMENT_STATUS = {
+  PENDING_VERIFICATION: 'pending_verification',
+  PENDING_PAYMENT: 'pending_payment',
+  PAID: 'paid',
+} as const;
+export type AdvancePaymentStatus = (typeof ADVANCE_PAYMENT_STATUS)[keyof typeof ADVANCE_PAYMENT_STATUS];
+
 export const PAYMENT_METHOD = {
   BANK_TRANSFER: 'bank_transfer',
   CHEQUE: 'cheque',

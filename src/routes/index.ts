@@ -26,6 +26,7 @@ import vendorRegistrationRoutes from '@/modules/vendorRegistration/vendorRegistr
 import vendorRegistrationLinkRoutes, { publicVendorRegistrationLinkRoutes } from '@/modules/vendorRegistrationLink/vendorRegistrationLink.routes';
 
 import addressRoutes from '@/modules/address/address.routes';
+import advancePaymentRoutes from '@/modules/advancePayment/advancePayment.routes';
 
 const router = Router();
 
@@ -54,6 +55,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/settings', settingRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/recurring-expenses', recurringExpenseRoutes);
+router.use('/advance-payments', advancePaymentRoutes);
 router.use('/external', externalRoutes);
 
 export default router;

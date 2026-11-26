@@ -1,7 +1,9 @@
 import type { Request, Response } from 'express';
+import type { Types } from 'mongoose';
 
 import { ROLES } from '@/constants/roles';
 import { activityLogService } from '@/modules/activityLog/activityLog.service';
+import { advancePaymentService } from '@/modules/advancePayment/advancePayment.service';
 import { directorReviewService } from '@/modules/directorReview/directorReview.service';
 import { notificationService } from '@/modules/notification/notification.service';
 import { Quotation } from '@/modules/quotation/quotation.model';
@@ -99,11 +101,28 @@ export const directorReviewController = {
         // vendor registration" gave no hint of WHICH vendor won until the Department User
         // opened the requirement and scrolled to the (now-added) Approved Quotation card.
         const winningQuotation = review.selectedQuotation
-          ? await Quotation.findById(review.selectedQuotation).populate('vendor', 'name').select('quotationCode amount vendor temporaryVendor')
+          ? await Quotation.findById(review.selectedQuotation)
+              .populate('vendor', 'name')
+              .select('quotationCode amount advanceAmount expectedPODate vendor temporaryVendor')
           : null;
         const winningVendorName = winningQuotation
           ? ((winningQuotation.vendor as unknown as { name?: string } | undefined)?.name ?? winningQuotation.temporaryVendor?.name)
           : undefined;
+
+        if (winningQuotation) {
+          advancePaymentService
+            .createForApprovedQuotation(
+              {
+                _id: requirement._id,
+                requirementNumber: requirement.requirementNumber,
+                department: department._id as unknown as Types.ObjectId,
+                createdBy: createdBy._id as unknown as Types.ObjectId,
+              },
+              winningQuotation,
+              req.user!,
+            )
+            .catch((err) => console.error(`[Advance Payment] Auto-create failed for requirement ${idOf(requirement)}:`, err));
+        }
 
         const admins = await notificationService.findActiveUsersByRole(ROLES.SUPER_ADMIN);
         await notificationService.notifyUsers([...receivers, ...admins], {

@@ -1,5 +1,6 @@
 import { ROLES } from '@/constants/roles';
 import { REQUIREMENT_STATUS } from '@/constants/status';
+import { advancePaymentService } from '@/modules/advancePayment/advancePayment.service';
 import { DirectorReview, type IDirectorReview } from '@/modules/directorReview/directorReview.model';
 import { Quotation, type IQuotation } from '@/modules/quotation/quotation.model';
 import { Requirement, type IRequirement } from '@/modules/requirement/requirement.model';
@@ -228,6 +229,10 @@ export const vendorRegistrationService = {
     requirement.status = REQUIREMENT_STATUS.VENDOR_FINALIZED;
     requirement.finalizedVendor = matched._id;
 
+    advancePaymentService
+      .backfillVendor(requirementId, String(matched._id), matched.name)
+      .catch((err) => console.error(`[Advance Payment] Vendor backfill failed for requirement ${requirementId}:`, err));
+
     return { vendor: matched, requirement, quotation };
   },
 };
@@ -306,6 +311,10 @@ export async function createVendorFromRequirement(
   );
   requirement.status = REQUIREMENT_STATUS.VENDOR_FINALIZED;
   requirement.finalizedVendor = vendor._id;
+
+  advancePaymentService
+    .backfillVendor(requirementId, String(vendor._id), vendor.name)
+    .catch((err) => console.error(`[Advance Payment] Vendor backfill failed for requirement ${requirementId}:`, err));
 
   return { vendor, requirement, quotation };
 }

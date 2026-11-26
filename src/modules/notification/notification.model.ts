@@ -80,6 +80,10 @@ export const NOTIFICATION_TYPES = [
   'reminder',
   // Recurring Expense
   'recurring_expense_due',
+  // Advance Payment (a Requirement's winning Quotation with advanceAmount > 0)
+  'advance_payment_due',
+  'advance_payment_verified',
+  'advance_payment_paid',
   // Payment due-date reminder (7-day-out nudge to Payment Department) — see
   // paymentDueReminder.service.ts. Covers both a confirmed Bill.dueDate and a tentative
   // RecurringExpense.nextDueDate (real invoice not generated yet).
